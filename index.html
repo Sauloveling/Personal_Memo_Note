@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>翻譯備忘簿</title>
+<style>
+:root {
+  --bg: #f7f6f3;
+  --panel: #ffffff;
+  --panel-2: #f1efe9;
+  --text: #2c2c2a;
+  --text-2: #5f5e5a;
+  --text-3: #93928c;
+  --border: #e2e0d8;
+  --accent: #185fa5;
+  --accent-bg: #e6f1fb;
+  --accent-border: #b5d4f4;
+  --warn: #854f0b;
+  --warn-bg: #faeeda;
+  --danger: #a32d2d;
+  --danger-bg: #fcebeb;
+  --ok: #0f6e56;
+  --ok-bg: #e1f5ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1c;
+    --panel: #2a2a28;
+    --panel-2: #333330;
+    --text: #eceae4;
+    --text-2: #b4b2a9;
+    --text-3: #82817b;
+    --border: #3d3d3a;
+    --accent: #85b7eb;
+    --accent-bg: #0c447c;
+    --accent-border: #185fa5;
+    --warn: #fac775;
+    --warn-bg: #633806;
+    --danger: #f09595;
+    --danger-bg: #791f1f;
+    --ok: #9fe1cb;
+    --ok-bg: #085041;
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+}
+.app { display: flex; flex-direction: column; height: 100dvh; }
+
+header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
+#search {
+  flex: 1; min-width: 120px; max-width: 260px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+#search:focus { outline: none; border-color: var(--accent-border); }
+.btn {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--panel-2); }
+.btn.primary { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+.btn.danger { color: var(--danger); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.spacer { flex: 1; }
+
+.body { flex: 1; display: flex; min-height: 0; position: relative; }
+
+#sidebar {
+  width: 240px; flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px;
+}
+.note-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+.note-item:hover { background: var(--panel-2); }
+.note-item.active { background: var(--accent-bg); }
+.note-item .nt { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-item.active .nt { color: var(--accent); }
+.note-item .nm { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.note-item.active .nm { color: var(--accent); opacity: 0.8; }
+#empty-list { padding: 20px 12px; font-size: 13px; color: var(--text-3); text-align: center; }
+
+#main { flex: 1; min-width: 0; overflow-y: auto; padding: 14px; }
+
+#editor {
+  width: 100%;
+  min-height: 42vh;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.8;
+  resize: vertical;
+  font-family: inherit;
+}
+#editor:focus { outline: none; border-color: var(--accent-border); }
+
+.statusbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 4px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.chip { padding: 2px 10px; border-radius: 6px; font-size: 12px; }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
+.chip.ok { background: var(--ok-bg); color: var(--ok); }
+
+.tbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-top: 6px;
+}
+.tbar select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+#swap { padding: 7px 10px; }
+
+#results { margin-top: 12px; }
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.pane {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.pane .ph {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-3);
+  margin-bottom: 8px;
+}
+.pane .ph button {
+  margin-left: auto;
+  border: none; background: none;
+  color: var(--accent); font-size: 12px; cursor: pointer;
+}
+.pane .pt { font-size: 14px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; }
+.pane.translated { border-color: var(--accent-border); }
+
+#fallback { margin-top: 12px; }
+#fallback .fb-note {
+  padding: 10px 14px;
+  background: var(--warn-bg); color: var(--warn);
+  border-radius: 8px; font-size: 13px; margin-bottom: 10px;
+  line-height: 1.6;
+}
+.fb-links { display: flex; gap: 8px; flex-wrap: wrap; }
+.fb-links a {
+  display: inline-block;
+  padding: 8px 16px;
+  background: var(--accent-bg); color: var(--accent);
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  font-size: 13px; text-decoration: none;
+}
+
+#toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg);
+  padding: 9px 20px; border-radius: 8px; font-size: 13px;
+  opacity: 0; transition: opacity 0.25s; pointer-events: none;
+  z-index: 50;
+}
+#toast.show { opacity: 0.95; }
+
+#menu-btn { display: none; }
+@media (max-width: 700px) {
+  #menu-btn { display: inline-block; }
+  #sidebar {
+    position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
+    transform: translateX(-105%);
+    transition: transform 0.2s;
+    box-shadow: 4px 0 16px rgba(0,0,0,0.15);
+  }
+  #sidebar.open { transform: translateX(0); }
+  .pair { grid-template-columns: 1fr; }
+  #search { max-width: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <button class="btn" id="menu-btn" title="筆記清單">☰</button>
+    <h1>📝 翻譯備忘簿</h1>
+    <input id="search" type="search" placeholder="搜尋筆記內容…">
+    <span class="spacer"></span>
+    <button class="btn primary" id="new-note">＋ 新筆記</button>
+    <button class="btn" id="export-txt" title="匯出目前這篇為 txt">匯出 txt</button>
+    <button class="btn" id="export-json" title="備份全部筆記為 json">備份全部</button>
+    <button class="btn" id="import-json" title="從 json 備份還原">還原</button>
+    <button class="btn danger" id="del-note">刪除</button>
+    <input type="file" id="import-file" accept=".json" hidden>
+  </header>
+
+  <div class="body">
+    <nav id="sidebar"></nav>
+
+    <main id="main">
+      <textarea id="editor" placeholder="在這裡輸入備忘內容，字數不限，打字會自動儲存。&#10;&#10;需要翻譯時按下方的「翻譯全文」，超過 5000 字會自動分段處理。"></textarea>
+
+      <div class="statusbar">
+        <span id="save-state">尚未儲存</span>
+        <span id="char-count">字數 0</span>
+        <span id="chunk-info"></span>
+      </div>
+
+      <div class="tbar">
+        <select id="sl">
+          <option value="auto">自動偵測</option>
+          <option value="zh-TW">中文（繁體）</option>
+          <option value="zh-CN">中文（簡體）</option>
+          <option value="en">英文</option>
+          <option value="ja">日文</option>
+          <option value="ko">韓文</option>
+          <option value="de">德文</option>
+          <option value="es">西班牙文</option>
+          <option value="fr">法文</option>
+          <option value="it">義大利文</option>
+        </select>
+        <button class="btn" id="swap" title="交換語言">⇄</button>
+        <select id="tl">
+          <option value="en">英文</option>
+          <option value="zh-TW" selected>中文（繁體）</option>
+          <option value="zh-CN">中文（簡體）</option>
+          <option value="ja">日文</option>
+          <option value="ko">韓文</option>
+          <option value="de">德文</option>
+          <option value="es">西班牙文</option>
+          <option value="fr">法文</option>
+          <option value="it">義大利文</option>
+        </select>
+        <button class="btn primary" id="translate">🌐 翻譯全文</button>
+        <button class="btn" id="gen-links" title="產生分段好的 Google 翻譯連結">產生分段連結</button>
+        <span class="spacer"></span>
+        <button class="btn" id="copy-all" style="display:none">複製全部譯文</button>
+      </div>
+
+      <div id="results"></div>
+      <div id="fallback"></div>
+    </main>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+const CHUNK_LIMIT = 4800;
+const LS_NOTES = 'tmemo_notes_v1';
+const LS_ACTIVE = 'tmemo_active_v1';
+
+const $ = id => document.getElementById(id);
+const editor = $('editor');
+
+let notes = [];
+let activeId = null;
+let saveTimer = null;
+
+function load() {
+  try { notes = JSON.parse(localStorage.getItem(LS_NOTES)) || []; }
+  catch { notes = []; }
+  activeId = localStorage.getItem(LS_ACTIVE);
+  if (!notes.length) {
+    createNote();
+  } else {
+    if (!notes.find(n => n.id === activeId)) activeId = notes[0].id;
+    openNote(activeId);
+  }
+}
+
+function persist() {
+  localStorage.setItem(LS_NOTES, JSON.stringify(notes));
+  localStorage.setItem(LS_ACTIVE, activeId || '');
+}
+
+function newId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function noteTitle(n) {
+  const line = (n.text || '').split('\n').find(l => l.trim());
+  return line ? line.trim().slice(0, 30) : '（空白筆記）';
+}
+
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return (d.getMonth() + 1) + '/' + d.getDate();
+}
+
+function createNote() {
+  const n = { id: newId(), text: '', created: Date.now(), updated: Date.now() };
+  notes.unshift(n);
+  activeId = n.id;
+  persist();
+  renderList();
+  editor.value = '';
+  updateStatus();
+  clearResults();
+  editor.focus();
+}
+
+function openNote(id) {
+  const n = notes.find(x => x.id === id);
+  if (!n) return;
+  activeId = id;
+  localStorage.setItem(LS_ACTIVE, id);
+  editor.value = n.text;
+  renderList();
+  updateStatus();
+  clearResults();
+  $('sidebar').classList.remove('open');
+}
+
+function activeNote() {
+  return notes.find(x => x.id === activeId);
+}
+
+function renderList(filter) {
+  const box = $('sidebar');
+  box.innerHTML = '';
+  const kw = (filter || '').toLowerCase();
+  const shown = notes.filter(n => !kw || n.text.toLowerCase().includes(kw));
+  if (!shown.length) {
+    const d = document.createElement('div');
+    d.id = 'empty-list';
+    d.textContent = kw ? '找不到符合的筆記' : '還沒有筆記';
+    box.appendChild(d);
+    return;
+  }
+  for (const n of shown) {
+    const item = document.createElement('div');
+    item.className = 'note-item' + (n.id === activeId ? ' active' : '');
+    const t = document.createElement('div');
+    t.className = 'nt';
+    t.textContent = noteTitle(n);
+    const m = document.createElement('div');
+    m.className = 'nm';
+    m.textContent = fmtDate(n.updated) + '・' + n.text.length.toLocaleString() + ' 字';
+    item.appendChild(t); item.appendChild(m);
+    item.onclick = () => openNote(n.id);
+    box.appendChild(item);
+  }
+}
+
+function updateStatus() {
+  const len = editor.value.length;
+  $('char-count').textContent = '字數 ' + len.toLocaleString();
+  const info = $('chunk-info');
+  if (len === 0) { info.textContent = ''; info.className = ''; return; }
+  const chunks = splitChunks(editor.value);
+  if (chunks.length > 1) {
+    info.textContent = '超過 ' + CHUNK_LIMIT.toLocaleString() + ' 字，將自動分成 ' + chunks.length + ' 段翻譯';
+    info.className = 'chip warn';
+  } else {
+    info.textContent = '一段內可完成翻譯';
+    info.className = 'chip ok';
+  }
+}
+
+editor.addEventListener('input', () => {
+  $('save-state').textContent = '輸入中…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const n = activeNote();
+    if (!n) return;
+    n.text = editor.value;
+    n.updated = Date.now();
+    persist();
+    renderList($('search').value);
+    const t = new Date();
+    $('save-state').textContent = '已自動儲存 ' +
+      String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+  }, 400);
+  updateStatus();
+});
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    toast('放心，內容會自動儲存');
+  }
+});
+
+$('new-note').onclick = createNote;
+
+$('del-note').onclick = () => {
+  const n = activeNote();
+  if (!n) return;
+  if (!confirm('確定要刪除「' + noteTitle(n) + '」嗎？此動作無法復原。')) return;
+  notes = notes.filter(x => x.id !== n.id);
+  if (!notes.length) { createNote(); }
+  else { openNote(notes[0].id); }
+  persist();
+  renderList($('search').value);
+  toast('已刪除');
+};
+
+$('search').addEventListener('input', e => renderList(e.target.value));
+
+$('menu-btn').onclick = () => $('sidebar').classList.toggle('open');
+
+$('swap').onclick = () => {
+  const sl = $('sl'), tl = $('tl');
+  if (sl.value === 'auto') { toast('來源語言是「自動偵測」，無法交換'); return; }
+  const a = sl.value;
+  sl.value = tl.value;
+  tl.value = a;
+};
+
+function download(name, content, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+$('export-txt').onclick = () => {
+  const n = activeNote();
+  if (!n || !n.text.trim()) { toast('目前筆記是空的'); return; }
+  download(noteTitle(n).replace(/[\\/:*?"<>|]/g, '_') + '.txt', n.text, 'text/plain;charset=utf-8');
+};
+
+$('export-json').onclick = () => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  download('翻譯備忘簿備份_' + stamp + '.json', JSON.stringify(notes, null, 2), 'application/json;charset=utf-8');
+  toast('已下載全部筆記備份');
+};
+
+$('import-json').onclick = () => $('import-file').click();
+$('import-file').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const arr = JSON.parse(reader.result);
+      if (!Array.isArray(arr)) throw new Error();
+      let added = 0;
+      for (const n of arr) {
+        if (!n || typeof n.text !== 'string') continue;
+        if (notes.find(x => x.id === n.id)) continue;
+        notes.push({ id: n.id || newId(), text: n.text, created: n.created || Date.now(), updated: n.updated || Date.now() });
+        added++;
+      }
+      notes.sort((a, b) => b.updated - a.updated);
+      persist();
+      renderList($('search').value);
+      toast('已還原 ' + added + ' 筆筆記');
+    } catch {
+      toast('檔案格式不對，請選擇之前的備份 json');
+    }
+  };
+  reader.readAsText(f);
+  e.target.value = '';
+});
+
+function splitChunks(text) {
+  if (text.length <= CHUNK_LIMIT) return [text];
+  const chunks = [];
+  let buf = '';
+  const paras = text.split(/(\n)/);
+  const flush = () => { if (buf) { chunks.push(buf); buf = ''; } };
+  for (let p of paras) {
+    if (buf.length + p.length <= CHUNK_LIMIT) { buf += p; continue; }
+    flush();
+    while (p.length > CHUNK_LIMIT) {
+      let cut = -1;
+      const window = p.slice(0, CHUNK_LIMIT);
+      for (const mark of ['。', '．', '！', '？', '. ', '! ', '? ', '，', ', ', ' ']) {
+        const i = window.lastIndexOf(mark);
+        if (i > cut) cut = i + mark.length - 1;
+      }
+      if (cut < CHUNK_LIMIT * 0.3) cut = CHUNK_LIMIT - 1;
+      chunks.push(p.slice(0, cut + 1));
+      p = p.slice(cut + 1);
+    }
+    buf = p;
+  }
+  flush();
+  return chunks.length ? chunks : [text];
+}
+
+async function translateChunk(text, sl, tl) {
+  const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' +
+    encodeURIComponent(sl) + '&tl=' + encodeURIComponent(tl) + '&dt=t';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: 'q=' + encodeURIComponent(text)
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  return (data[0] || []).map(seg => (seg && seg[0]) || '').join('');
+}
+
+function clearResults() {
+  $('results').innerHTML = '';
+  $('fallback').innerHTML = '';
+  $('copy-all').style.display = 'none';
+}
+
+function copyText(text, msg) {
+  navigator.clipboard.writeText(text)
+    .then(() => toast(msg || '已複製'))
+    .catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      toast(msg || '已複製');
+    });
+}
+
+$('translate').onclick = async () => {
+  const text = editor.value.trim();
+  if (!text) { toast('先輸入要翻譯的內容'); return; }
+  const sl = $('sl').value, tl = $('tl').value;
+  const chunks = splitChunks(editor.value);
+  clearResults();
+
+  const btn = $('translate');
+  btn.disabled = true;
+  const results = new Array(chunks.length).fill(null);
+  const resBox = $('results');
+
+  const panes = chunks.map((chunk, i) => {
+    const pair = document.createElement('div');
+    pair.className = 'pair';
+    pair.innerHTML =
+      '<div class="pane"><div class="ph"><span>原文' + (chunks.length > 1 ? '・第 ' + (i + 1) + ' 段' : '') +
+      '（' + chunk.length.toLocaleString() + ' 字）</span></div><div class="pt"></div></div>' +
+      '<div class="pane translated"><div class="ph"><span>譯文' + (chunks.length > 1 ? '・第 ' + (i + 1) + ' 段' : '') +
+      '</span><button>複製</button></div><div class="pt">翻譯中…</div></div>';
+    pair.querySelector('.pane .pt').textContent = chunk;
+    resBox.appendChild(pair);
+    return pair.querySelector('.translated');
+  });
+
+  let failed = false;
+  for (let i = 0; i < chunks.length; i++) {
+    btn.textContent = '翻譯中 ' + (i + 1) + '/' + chunks.length + '…';
+    try {
+      const out = await translateChunk(chunks[i], sl, tl);
+      results[i] = out;
+      panes[i].querySelector('.pt').textContent = out;
+      panes[i].querySelector('button').onclick = () => copyText(out, '已複製第 ' + (i + 1) + ' 段譯文');
+    } catch (err) {
+      failed = true;
+      panes[i].querySelector('.pt').textContent = '⚠️ 這一段翻譯失敗（' + err.message + '）';
+      panes[i].querySelector('button').style.display = 'none';
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🌐 翻譯全文';
+
+  if (failed) {
+    showFallback(chunks, sl, tl, '部分段落線上翻譯失敗，可改用下面的分段連結，開啟 Google 翻譯網頁版：');
+  }
+  const ok = results.filter(r => r !== null);
+  if (ok.length) {
+    const all = $('copy-all');
+    all.style.display = '';
+    all.onclick = () => copyText(ok.join('\n'), '已複製全部譯文');
+  }
+};
+
+$('gen-links').onclick = () => {
+  const text = editor.value.trim();
+  if (!text) { toast('先輸入內容'); return; }
+  clearResults();
+  showFallback(splitChunks(editor.value), $('sl').value, $('tl').value,
+    '已將內容切成 ' + splitChunks(editor.value).length + ' 段（每段不超過 5000 字），點按鈕會開啟 Google 翻譯網頁版：');
+};
+
+function showFallback(chunks, sl, tl, msg) {
+  const box = $('fallback');
+  box.innerHTML = '';
+  const note = document.createElement('div');
+  note.className = 'fb-note';
+  note.textContent = msg;
+  box.appendChild(note);
+  const links = document.createElement('div');
+  links.className = 'fb-links';
+  chunks.forEach((chunk, i) => {
+    const a = document.createElement('a');
+    a.href = 'https://translate.google.com/?sl=' + encodeURIComponent(sl) +
+      '&tl=' + encodeURIComponent(tl) + '&text=' + encodeURIComponent(chunk) + '&op=translate';
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = '開啟第 ' + (i + 1) + ' 段（' + chunk.length.toLocaleString() + ' 字）';
+    links.appendChild(a);
+  });
+  box.appendChild(links);
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+load();
+</script>
+</body>
+</html>
