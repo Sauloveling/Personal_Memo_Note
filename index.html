@@ -198,6 +198,37 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   font-size: 13px; text-decoration: none;
 }
 
+#sync-btn .dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-3); margin-right: 6px; vertical-align: 1px;
+}
+#sync-btn.ok .dot { background: var(--ok); }
+#sync-btn.err .dot { background: var(--danger); }
+#sync-btn.syncing .dot { background: var(--warn); }
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 40;
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 30px 12px; overflow-y: auto;
+}
+.overlay.show { display: flex; }
+.dialog {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; max-width: 580px; width: 100%; padding: 20px;
+}
+.dialog h2 { font-size: 16px; margin-bottom: 10px; }
+.dialog ol { padding-left: 22px; font-size: 14px; line-height: 1.9; color: var(--text-2); }
+.dialog ol li { margin-bottom: 6px; }
+.dialog code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+.drow { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.drow input {
+  flex: 1; min-width: 200px; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+.drow input:focus { outline: none; border-color: var(--accent-border); }
+.dnote { font-size: 12px; color: var(--text-3); margin-top: 12px; line-height: 1.7; }
+#sync-status-line { font-size: 13px; margin-top: 12px; color: var(--text-2); }
+
 #toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: var(--text); color: var(--bg);
@@ -234,6 +265,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
     <button class="btn" id="export-json" title="備份全部筆記為 json">備份全部</button>
     <button class="btn" id="import-json" title="從 json 備份還原">還原</button>
     <button class="btn danger" id="del-note">刪除</button>
+    <button class="btn" id="sync-btn" title="跨裝置自動同步"><span class="dot"></span>同步</button>
     <input type="file" id="import-file" accept=".json" hidden>
   </header>
 
@@ -287,12 +319,43 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 </div>
 <div id="toast"></div>
 
+<div class="overlay" id="sync-overlay">
+  <div class="dialog">
+    <h2>☁️ 跨裝置自動同步</h2>
+    <p style="font-size:14px; color:var(--text-2); margin-bottom:10px;">設定一次後，手機和電腦的筆記會自動保持一致。筆記會存到你 GitHub 帳號的私密空間，只有你看得到。</p>
+    <ol>
+      <li>按下面「<b>建立金鑰</b>」，會開啟 GitHub 頁面（權限已幫你勾好）。<br>效期 Expiration 選 <b>No expiration</b>，捲到最下面按綠色 <b>Generate token</b> 按鈕</li>
+      <li>複製畫面上 <code>ghp_</code> 開頭的一串金鑰，貼到下面欄位，按「<b>啟用同步</b>」</li>
+      <li>手機打開同一個網址 → 按「同步」→ 貼上<b>同一組金鑰</b>就完成了<br>（金鑰可以用 LINE 傳給自己，設定完就可刪除訊息）</li>
+    </ol>
+    <div class="drow">
+      <a class="btn" href="https://github.com/settings/tokens/new?scopes=gist&description=Translate-Memo-Sync" target="_blank" rel="noopener">🔑 建立金鑰（開啟 GitHub）</a>
+    </div>
+    <div class="drow">
+      <input type="password" id="token-input" placeholder="貼上 ghp_ 開頭的金鑰" autocomplete="off">
+      <button class="btn primary" id="enable-sync">啟用同步</button>
+    </div>
+    <div id="sync-status-line">尚未啟用同步</div>
+    <div class="drow">
+      <button class="btn" id="sync-now">立即同步</button>
+      <button class="btn danger" id="disable-sync">停用同步</button>
+      <span class="spacer"></span>
+      <button class="btn" id="close-sync">關閉</button>
+    </div>
+    <p class="dnote">金鑰只存在這台裝置的瀏覽器裡，不會傳到 GitHub 以外的任何地方。若同一篇筆記在兩台裝置同時修改，會以較晚儲存的版本為準。</p>
+  </div>
+</div>
+
 <script>
 'use strict';
 
 const CHUNK_LIMIT = 4800;
 const LS_NOTES = 'tmemo_notes_v1';
 const LS_ACTIVE = 'tmemo_active_v1';
+const LS_TOKEN = 'tmemo_token_v1';
+const LS_GIST = 'tmemo_gist_v1';
+const LS_DELETED = 'tmemo_deleted_v1';
+const SYNC_FILE = 'translate-memo-sync.json';
 
 const $ = id => document.getElementById(id);
 const editor = $('editor');
@@ -300,6 +363,8 @@ const editor = $('editor');
 let notes = [];
 let activeId = null;
 let saveTimer = null;
+let deleted = {};
+try { deleted = JSON.parse(localStorage.getItem(LS_DELETED)) || {}; } catch { deleted = {}; }
 
 function load() {
   try { notes = JSON.parse(localStorage.getItem(LS_NOTES)) || []; }
@@ -316,6 +381,7 @@ function load() {
 function persist() {
   localStorage.setItem(LS_NOTES, JSON.stringify(notes));
   localStorage.setItem(LS_ACTIVE, activeId || '');
+  localStorage.setItem(LS_DELETED, JSON.stringify(deleted));
 }
 
 function newId() {
@@ -415,6 +481,7 @@ editor.addEventListener('input', () => {
     const t = new Date();
     $('save-state').textContent = '已自動儲存 ' +
       String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+    scheduleSync();
   }, 400);
   updateStatus();
 });
@@ -432,12 +499,14 @@ $('del-note').onclick = () => {
   const n = activeNote();
   if (!n) return;
   if (!confirm('確定要刪除「' + noteTitle(n) + '」嗎？此動作無法復原。')) return;
+  deleted[n.id] = Date.now();
   notes = notes.filter(x => x.id !== n.id);
   if (!notes.length) { createNote(); }
   else { openNote(notes[0].id); }
   persist();
   renderList($('search').value);
   toast('已刪除');
+  scheduleSync();
 };
 
 $('search').addEventListener('input', e => renderList(e.target.value));
@@ -493,6 +562,7 @@ $('import-file').addEventListener('change', e => {
       persist();
       renderList($('search').value);
       toast('已還原 ' + added + ' 筆筆記');
+      scheduleSync();
     } catch {
       toast('檔案格式不對，請選擇之前的備份 json');
     }
@@ -652,7 +722,207 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
+let syncing = false;
+let syncQueued = false;
+let syncScheduleTimer = null;
+let lastSyncOk = 0;
+
+function getToken() { return localStorage.getItem(LS_TOKEN) || ''; }
+
+async function gh(path, opts = {}) {
+  const res = await fetch('https://api.github.com' + path, {
+    ...opts,
+    headers: {
+      'Authorization': 'token ' + getToken(),
+      'Accept': 'application/vnd.github+json',
+      ...(opts.headers || {})
+    }
+  });
+  if (res.status === 401) throw new Error('TOKEN_INVALID');
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res;
+}
+
+async function findOrCreateGist() {
+  let id = localStorage.getItem(LS_GIST);
+  if (id) {
+    try { await gh('/gists/' + id); return id; }
+    catch (e) {
+      if (e.message === 'TOKEN_INVALID') throw e;
+      localStorage.removeItem(LS_GIST);
+    }
+  }
+  const list = await (await gh('/gists?per_page=100')).json();
+  const hit = list.find(g => g.files && g.files[SYNC_FILE]);
+  if (hit) { localStorage.setItem(LS_GIST, hit.id); return hit.id; }
+  const created = await (await gh('/gists', {
+    method: 'POST',
+    body: JSON.stringify({
+      description: '翻譯備忘簿同步資料（請勿手動修改）',
+      public: false,
+      files: { [SYNC_FILE]: { content: JSON.stringify({ notes: [], deleted: {} }) } }
+    })
+  })).json();
+  localStorage.setItem(LS_GIST, created.id);
+  return created.id;
+}
+
+async function pullRemote(id) {
+  const g = await (await gh('/gists/' + id)).json();
+  const f = g.files && g.files[SYNC_FILE];
+  if (!f) return { notes: [], deleted: {} };
+  let content = f.content;
+  if (f.truncated) content = await (await fetch(f.raw_url)).text();
+  try {
+    const d = JSON.parse(content);
+    return { notes: Array.isArray(d.notes) ? d.notes : [], deleted: d.deleted || {} };
+  } catch { return { notes: [], deleted: {} }; }
+}
+
+function mergeData(remote) {
+  const del = { ...remote.deleted };
+  for (const [id, ts] of Object.entries(deleted)) {
+    if (!del[id] || del[id] < ts) del[id] = ts;
+  }
+  const map = new Map();
+  for (const n of remote.notes) map.set(n.id, n);
+  for (const n of notes) {
+    const r = map.get(n.id);
+    if (!r || n.updated > r.updated) map.set(n.id, n);
+  }
+  let merged = [...map.values()].filter(n => !(del[n.id] && del[n.id] >= n.updated));
+  const hasContent = merged.some(n => n.text.trim());
+  if (hasContent) merged = merged.filter(n => n.text.trim() || n.id === activeId);
+  merged.sort((a, b) => b.updated - a.updated);
+  const changedLocal = JSON.stringify(merged) !== JSON.stringify(notes);
+  const changedRemote = JSON.stringify(merged) !== JSON.stringify(remote.notes) ||
+    JSON.stringify(del) !== JSON.stringify(remote.deleted);
+  deleted = del;
+  return { merged, changedLocal, changedRemote };
+}
+
+function applyRemoteToUI() {
+  if (!notes.length) { createNote(); return; }
+  let n = notes.find(x => x.id === activeId);
+  const idle = document.activeElement !== editor;
+  if (n && !n.text.trim() && !editor.value.trim()) {
+    const better = notes.find(x => x.text.trim());
+    if (better) n = better;
+  }
+  if (!n) n = notes[0];
+  if (n.id !== activeId) {
+    activeId = n.id;
+    editor.value = n.text;
+    updateStatus();
+    clearResults();
+  } else if (editor.value !== n.text && idle) {
+    editor.value = n.text;
+    updateStatus();
+  }
+  renderList($('search').value);
+}
+
+async function syncNow(passive) {
+  if (!getToken()) return;
+  if (syncing) { syncQueued = true; return; }
+  if (passive && Date.now() - lastSyncOk < 10000) return;
+  syncing = true;
+  setSyncUI('syncing');
+  try {
+    const id = await findOrCreateGist();
+    const remote = await pullRemote(id);
+    const { merged, changedLocal, changedRemote } = mergeData(remote);
+    notes = merged;
+    if (changedLocal) applyRemoteToUI();
+    persist();
+    if (changedRemote) {
+      await gh('/gists/' + id, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          files: { [SYNC_FILE]: { content: JSON.stringify({ notes, deleted, updated: Date.now() }) } }
+        })
+      });
+    }
+    lastSyncOk = Date.now();
+    setSyncUI('ok');
+  } catch (e) {
+    setSyncUI(e.message === 'TOKEN_INVALID' ? 'badtoken' : 'error');
+  }
+  syncing = false;
+  if (syncQueued) { syncQueued = false; syncNow(); }
+}
+
+function scheduleSync() {
+  if (!getToken()) return;
+  clearTimeout(syncScheduleTimer);
+  syncScheduleTimer = setTimeout(() => syncNow(), 2500);
+}
+
+function setSyncUI(state) {
+  const btn = $('sync-btn');
+  const line = $('sync-status-line');
+  btn.className = 'btn';
+  if (state === 'nosetup') {
+    btn.innerHTML = '<span class="dot"></span>同步';
+    line.textContent = '尚未啟用同步';
+  } else if (state === 'syncing') {
+    btn.classList.add('syncing');
+    btn.innerHTML = '<span class="dot"></span>同步中…';
+    line.textContent = '同步中…';
+  } else if (state === 'ok') {
+    const t = new Date();
+    const hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+    btn.classList.add('ok');
+    btn.innerHTML = '<span class="dot"></span>已同步 ' + hm;
+    line.textContent = '✅ 同步正常，最後同步時間 ' + hm + '，共 ' + notes.length + ' 筆筆記';
+  } else if (state === 'badtoken') {
+    btn.classList.add('err');
+    btn.innerHTML = '<span class="dot"></span>金鑰失效';
+    line.textContent = '⚠️ 金鑰無效或已過期，請重新建立金鑰後再貼上啟用';
+  } else {
+    btn.classList.add('err');
+    btn.innerHTML = '<span class="dot"></span>同步失敗';
+    line.textContent = '⚠️ 這次同步失敗（可能是網路問題），稍後會自動重試';
+  }
+}
+
+$('sync-btn').onclick = () => $('sync-overlay').classList.add('show');
+$('close-sync').onclick = () => $('sync-overlay').classList.remove('show');
+$('sync-overlay').addEventListener('click', e => {
+  if (e.target === $('sync-overlay')) $('sync-overlay').classList.remove('show');
+});
+
+$('enable-sync').onclick = async () => {
+  const t = $('token-input').value.trim();
+  if (!t) { toast('請先貼上金鑰'); return; }
+  localStorage.setItem(LS_TOKEN, t);
+  localStorage.removeItem(LS_GIST);
+  $('token-input').value = '';
+  toast('正在連線 GitHub…');
+  await syncNow();
+};
+
+$('disable-sync').onclick = () => {
+  if (!getToken()) { toast('目前沒有啟用同步'); return; }
+  if (!confirm('確定要停用同步嗎？筆記會留在這台裝置，只是不再自動同步。')) return;
+  localStorage.removeItem(LS_TOKEN);
+  localStorage.removeItem(LS_GIST);
+  setSyncUI('nosetup');
+  toast('已停用同步');
+};
+
+$('sync-now').onclick = () => {
+  if (!getToken()) { toast('請先完成上面的金鑰設定'); return; }
+  syncNow();
+};
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(true); });
+window.addEventListener('focus', () => syncNow(true));
+window.addEventListener('online', () => syncNow(true));
+setInterval(() => syncNow(true), 180000);
+
 load();
+if (getToken()) syncNow(); else setSyncUI('nosetup');
 </script>
 </body>
 </html>
