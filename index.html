@@ -97,13 +97,27 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   padding: 8px;
 }
 .note-item {
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px 8px 12px;
   border-radius: 8px;
   cursor: pointer;
   margin-bottom: 2px;
 }
 .note-item:hover { background: var(--panel-2); }
 .note-item.active { background: var(--accent-bg); }
+.note-main { flex: 1; min-width: 0; }
+.note-move { display: flex; flex-direction: column; flex-shrink: 0; }
+.note-move button {
+  border: none; background: none;
+  color: var(--text-3); cursor: pointer;
+  font-size: 10px; line-height: 1;
+  padding: 4px 6px; border-radius: 4px;
+}
+.note-move button:hover { background: var(--panel); color: var(--text); }
+.note-move button:disabled { opacity: 0.25; cursor: default; }
+.note-move button:disabled:hover { background: none; color: var(--text-3); }
 .note-item .nt { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-item.active .nt { color: var(--accent); }
 .note-item .nm { font-size: 12px; color: var(--text-3); margin-top: 2px; }
@@ -385,6 +399,7 @@ try { deleted = JSON.parse(localStorage.getItem(LS_DELETED)) || {}; } catch { de
 function load() {
   try { notes = JSON.parse(localStorage.getItem(LS_NOTES)) || []; }
   catch { notes = []; }
+  normalizeOrders();
   activeId = localStorage.getItem(LS_ACTIVE);
   if (!notes.length) {
     createNote();
@@ -414,6 +429,42 @@ function isEmptyNote(n) {
   return !(n.text || '').trim() && !(n.title || '').trim();
 }
 
+function effOrder(n) {
+  return (typeof n.order === 'number') ? n.order : -(n.updated || 0);
+}
+
+function sortNotes() {
+  notes.sort((a, b) => effOrder(a) - effOrder(b));
+}
+
+function normalizeOrders() {
+  sortNotes();
+  if (notes.some(n => typeof n.order !== 'number')) {
+    notes.forEach((n, i) => { n.order = i * 10; });
+  }
+}
+
+function topOrder() {
+  return notes.length ? Math.min(...notes.map(effOrder)) - 10 : 0;
+}
+
+function moveNote(id, dir) {
+  sortNotes();
+  const i = notes.findIndex(n => n.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= notes.length) return;
+  const a = notes[i], b = notes[j];
+  const ao = effOrder(a), bo = effOrder(b);
+  a.order = bo;
+  b.order = ao;
+  if (ao === bo) a.order = bo + dir * 0.5;
+  a.updated = Date.now();
+  b.updated = Date.now();
+  persist();
+  renderList($('search').value);
+  scheduleSync();
+}
+
 function fmtDate(ts) {
   const d = new Date(ts);
   return (d.getMonth() + 1) + '/' + d.getDate();
@@ -421,7 +472,7 @@ function fmtDate(ts) {
 
 function createNote() {
   flushSave();
-  const n = { id: newId(), title: '', text: '', created: Date.now(), updated: Date.now() };
+  const n = { id: newId(), title: '', text: '', order: topOrder(), created: Date.now(), updated: Date.now() };
   notes.unshift(n);
   activeId = n.id;
   persist();
@@ -452,6 +503,7 @@ function activeNote() {
 }
 
 function renderList(filter) {
+  sortNotes();
   const box = $('sidebar');
   box.innerHTML = '';
   const kw = (filter || '').toLowerCase();
@@ -463,19 +515,38 @@ function renderList(filter) {
     box.appendChild(d);
     return;
   }
-  for (const n of shown) {
+  shown.forEach((n, idx) => {
     const item = document.createElement('div');
     item.className = 'note-item' + (n.id === activeId ? ' active' : '');
+    const main = document.createElement('div');
+    main.className = 'note-main';
     const t = document.createElement('div');
     t.className = 'nt';
     t.textContent = noteTitle(n);
     const m = document.createElement('div');
     m.className = 'nm';
     m.textContent = fmtDate(n.updated) + '・' + n.text.length.toLocaleString() + ' 字';
-    item.appendChild(t); item.appendChild(m);
+    main.appendChild(t); main.appendChild(m);
+    item.appendChild(main);
+    if (!kw) {
+      const mv = document.createElement('div');
+      mv.className = 'note-move';
+      const up = document.createElement('button');
+      up.textContent = '▲';
+      up.title = '往上移';
+      up.disabled = idx === 0;
+      up.onclick = e => { e.stopPropagation(); moveNote(n.id, -1); };
+      const down = document.createElement('button');
+      down.textContent = '▼';
+      down.title = '往下移';
+      down.disabled = idx === shown.length - 1;
+      down.onclick = e => { e.stopPropagation(); moveNote(n.id, 1); };
+      mv.appendChild(up); mv.appendChild(down);
+      item.appendChild(mv);
+    }
     item.onclick = () => openNote(n.id);
     box.appendChild(item);
-  }
+  });
 }
 
 function updateStatus() {
@@ -594,10 +665,10 @@ $('import-file').addEventListener('change', e => {
       for (const n of arr) {
         if (!n || typeof n.text !== 'string') continue;
         if (notes.find(x => x.id === n.id)) continue;
-        notes.push({ id: n.id || newId(), title: n.title || '', text: n.text, created: n.created || Date.now(), updated: n.updated || Date.now() });
+        notes.push({ id: n.id || newId(), title: n.title || '', text: n.text, order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() });
         added++;
       }
-      notes.sort((a, b) => b.updated - a.updated);
+      sortNotes();
       persist();
       renderList($('search').value);
       toast('已還原 ' + added + ' 筆筆記');
@@ -832,7 +903,7 @@ function mergeData(remote) {
   let merged = [...map.values()].filter(n => !(del[n.id] && del[n.id] >= n.updated));
   const hasContent = merged.some(n => !isEmptyNote(n));
   if (hasContent) merged = merged.filter(n => !isEmptyNote(n) || n.id === activeId);
-  merged.sort((a, b) => b.updated - a.updated);
+  merged.sort((a, b) => effOrder(a) - effOrder(b));
   const changedLocal = JSON.stringify(merged) !== JSON.stringify(notes);
   const changedRemote = JSON.stringify(merged) !== JSON.stringify(remote.notes) ||
     JSON.stringify(del) !== JSON.stringify(remote.deleted);
@@ -875,6 +946,7 @@ async function syncNow(passive) {
     const remote = await pullRemote(id);
     const { merged, changedLocal, changedRemote } = mergeData(remote);
     notes = merged;
+    normalizeOrders();
     if (changedLocal) applyRemoteToUI();
     persist();
     if (changedRemote) {
