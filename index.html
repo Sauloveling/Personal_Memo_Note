@@ -156,6 +156,29 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 }
 #editor:focus { outline: none; border-color: var(--accent-border); }
 
+#img-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+#img-strip { display: contents; }
+.img-thumb {
+  position: relative; width: 96px; height: 96px;
+  border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border); cursor: zoom-in;
+}
+.img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.img-del {
+  position: absolute; top: 4px; right: 4px;
+  width: 22px; height: 22px;
+  border: none; border-radius: 50%;
+  background: rgba(0,0,0,0.55); color: #fff;
+  font-size: 12px; line-height: 1; cursor: pointer;
+}
+#lightbox {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.82); z-index: 60;
+  display: none; align-items: center; justify-content: center;
+  padding: 20px; cursor: zoom-out;
+}
+#lightbox.show { display: flex; }
+#lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+
 .statusbar {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 8px 4px;
@@ -305,6 +328,12 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
       <input id="note-title" type="text" placeholder="標題（留空會自動以第一行當標題）" autocomplete="off">
       <textarea id="editor" placeholder="在這裡輸入備忘內容，字數不限，打字會自動儲存。&#10;&#10;需要翻譯時按下方的「翻譯全文」，超過 5000 字會自動分段處理。"></textarea>
 
+      <div id="img-bar">
+        <div id="img-strip"></div>
+        <button class="btn" id="add-img" title="也可以直接在內文按 Ctrl+V 貼上圖片">📷 加入圖片</button>
+        <input type="file" id="img-file" accept="image/*" multiple hidden>
+      </div>
+
       <div class="statusbar">
         <span id="save-state">尚未儲存</span>
         <span id="char-count">字數 0</span>
@@ -349,6 +378,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   </div>
 </div>
 <div id="toast"></div>
+<div id="lightbox"><img id="lightbox-img" alt="圖片放大檢視"></div>
 
 <div class="overlay" id="sync-overlay">
   <div class="dialog">
@@ -411,9 +441,14 @@ function load() {
 }
 
 function persist() {
-  localStorage.setItem(LS_NOTES, JSON.stringify(notes));
-  localStorage.setItem(LS_ACTIVE, activeId || '');
-  localStorage.setItem(LS_DELETED, JSON.stringify(deleted));
+  try {
+    localStorage.setItem(LS_NOTES, JSON.stringify(notes));
+    localStorage.setItem(LS_ACTIVE, activeId || '');
+    localStorage.setItem(LS_DELETED, JSON.stringify(deleted));
+  } catch (e) {
+    toast('⚠️ 本機儲存空間已滿，請刪除一些圖片或筆記');
+    throw e;
+  }
 }
 
 function newId() {
@@ -427,7 +462,7 @@ function noteTitle(n) {
 }
 
 function isEmptyNote(n) {
-  return !(n.text || '').trim() && !(n.title || '').trim();
+  return !(n.text || '').trim() && !(n.title || '').trim() && !((n.images || []).length);
 }
 
 function effOrder(n) {
@@ -473,7 +508,7 @@ function fmtDate(ts) {
 
 function createNote() {
   flushSave();
-  const n = { id: newId(), title: '', text: '', order: topOrder(), created: Date.now(), updated: Date.now() };
+  const n = { id: newId(), title: '', text: '', images: [], order: topOrder(), created: Date.now(), updated: Date.now() };
   notes.unshift(n);
   activeId = n.id;
   persist();
@@ -482,6 +517,7 @@ function createNote() {
   editor.value = '';
   updateStatus();
   clearResults();
+  renderImages();
   $('note-title').focus();
 }
 
@@ -496,6 +532,7 @@ function openNote(id) {
   renderList();
   updateStatus();
   clearResults();
+  renderImages();
   $('sidebar').classList.remove('open');
 }
 
@@ -526,7 +563,8 @@ function renderList(filter) {
     t.textContent = noteTitle(n);
     const m = document.createElement('div');
     m.className = 'nm';
-    m.textContent = fmtDate(n.updated) + '・' + n.text.length.toLocaleString() + ' 字';
+    m.textContent = fmtDate(n.updated) + '・' + n.text.length.toLocaleString() + ' 字' +
+      ((n.images || []).length ? '・📷' + n.images.length : '');
     main.appendChild(t); main.appendChild(m);
     item.appendChild(main);
     if (!kw) {
@@ -666,7 +704,7 @@ $('import-file').addEventListener('change', e => {
       for (const n of arr) {
         if (!n || typeof n.text !== 'string') continue;
         if (notes.find(x => x.id === n.id)) continue;
-        notes.push({ id: n.id || newId(), title: n.title || '', text: n.text, order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() });
+        notes.push({ id: n.id || newId(), title: n.title || '', text: n.text, images: Array.isArray(n.images) ? n.images : [], order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() });
         added++;
       }
       sortNotes();
@@ -847,6 +885,115 @@ function showFallback(chunks, sl, tl, msg) {
   box.appendChild(links);
 }
 
+function renderImages() {
+  const strip = $('img-strip');
+  strip.innerHTML = '';
+  const n = activeNote();
+  if (!n) return;
+  (n.images || []).forEach((im, i) => {
+    const d = document.createElement('div');
+    d.className = 'img-thumb';
+    const img = document.createElement('img');
+    img.src = im.data;
+    img.alt = '筆記圖片 ' + (i + 1);
+    d.appendChild(img);
+    const del = document.createElement('button');
+    del.className = 'img-del';
+    del.textContent = '✕';
+    del.title = '刪除圖片';
+    del.onclick = e => {
+      e.stopPropagation();
+      if (!confirm('刪除這張圖片？')) return;
+      n.images.splice(i, 1);
+      n.updated = Date.now();
+      persist();
+      renderImages();
+      renderList($('search').value);
+      scheduleSync();
+    };
+    d.appendChild(del);
+    d.onclick = () => {
+      $('lightbox-img').src = im.data;
+      $('lightbox').classList.add('show');
+    };
+    strip.appendChild(d);
+  });
+}
+
+$('lightbox').onclick = () => {
+  $('lightbox').classList.remove('show');
+  $('lightbox-img').src = '';
+};
+
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 1280;
+      let w = img.width, h = img.height;
+      if (Math.max(w, h) > MAX) {
+        const s = MAX / Math.max(w, h);
+        w = Math.round(w * s);
+        h = Math.round(h * s);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('read failed')); };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function addImages(files) {
+  const n = activeNote();
+  if (!n) return;
+  const list = [...files].filter(f => f.type && f.type.startsWith('image/'));
+  if (!list.length) return;
+  toast('圖片處理中…');
+  let added = 0;
+  for (const f of list) {
+    try {
+      const data = await compressImage(f);
+      (n.images = n.images || []).push({ id: newId(), data });
+      added++;
+    } catch { toast('有一張圖片讀取失敗'); }
+  }
+  if (!added) return;
+  n.updated = Date.now();
+  try { persist(); } catch {
+    n.images.splice(n.images.length - added, added);
+    persist();
+    return;
+  }
+  renderImages();
+  renderList($('search').value);
+  scheduleSync();
+  toast('已加入 ' + added + ' 張圖片');
+}
+
+$('add-img').onclick = () => $('img-file').click();
+$('img-file').addEventListener('change', e => {
+  addImages(e.target.files);
+  e.target.value = '';
+});
+
+document.addEventListener('paste', e => {
+  if (document.activeElement === $('token-input')) return;
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  const files = [];
+  for (const it of items) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) files.push(it.getAsFile());
+  }
+  if (files.length) {
+    e.preventDefault();
+    addImages(files);
+  }
+});
+
 let toastTimer = null;
 function toast(msg) {
   const t = $('toast');
@@ -957,6 +1104,7 @@ function applyRemoteToUI() {
     updateStatus();
   }
   renderList($('search').value);
+  renderImages();
 }
 
 async function syncNow(passive) {
