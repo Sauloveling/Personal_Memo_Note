@@ -340,6 +340,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
         <button class="btn" id="gen-links" title="產生分段好的 Google 翻譯連結">產生分段連結</button>
         <span class="spacer"></span>
         <button class="btn" id="copy-all" style="display:none">複製全部譯文</button>
+        <button class="btn" id="clear-results" style="display:none">✕ 清除結果</button>
       </div>
 
       <div id="results"></div>
@@ -720,11 +721,28 @@ async function translateChunk(text, sl, tl) {
   return (data[0] || []).map(seg => (seg && seg[0]) || '').join('');
 }
 
+let translateSeq = 0;
+
 function clearResults() {
   $('results').innerHTML = '';
   $('fallback').innerHTML = '';
   $('copy-all').style.display = 'none';
+  $('clear-results').style.display = 'none';
 }
+
+function showClear(label) {
+  const b = $('clear-results');
+  b.textContent = label;
+  b.style.display = '';
+}
+
+$('clear-results').onclick = () => {
+  translateSeq++;
+  clearResults();
+  const btn = $('translate');
+  btn.disabled = false;
+  btn.textContent = '🌐 翻譯全文';
+};
 
 function copyText(text, msg) {
   navigator.clipboard.writeText(text)
@@ -746,6 +764,8 @@ $('translate').onclick = async () => {
   const sl = $('sl').value, tl = $('tl').value;
   const chunks = splitChunks(editor.value);
   clearResults();
+  const run = ++translateSeq;
+  showClear('✕ 取消翻譯');
 
   const btn = $('translate');
   btn.disabled = true;
@@ -770,10 +790,12 @@ $('translate').onclick = async () => {
     btn.textContent = '翻譯中 ' + (i + 1) + '/' + chunks.length + '…';
     try {
       const out = await translateChunk(chunks[i], sl, tl);
+      if (run !== translateSeq) return;
       results[i] = out;
       panes[i].querySelector('.pt').textContent = out;
       panes[i].querySelector('button').onclick = () => copyText(out, '已複製第 ' + (i + 1) + ' 段譯文');
     } catch (err) {
+      if (run !== translateSeq) return;
       failed = true;
       panes[i].querySelector('.pt').textContent = '⚠️ 這一段翻譯失敗（' + err.message + '）';
       panes[i].querySelector('button').style.display = 'none';
@@ -782,6 +804,7 @@ $('translate').onclick = async () => {
 
   btn.disabled = false;
   btn.textContent = '🌐 翻譯全文';
+  showClear('✕ 清除結果');
 
   if (failed) {
     showFallback(chunks, sl, tl, '部分段落線上翻譯失敗，可改用下面的分段連結，開啟 Google 翻譯網頁版：');
@@ -800,6 +823,7 @@ $('gen-links').onclick = () => {
   clearResults();
   showFallback(splitChunks(editor.value), $('sl').value, $('tl').value,
     '已將內容切成 ' + splitChunks(editor.value).length + ' 段（每段不超過 5000 字），點按鈕會開啟 Google 翻譯網頁版：');
+  showClear('✕ 清除結果');
 };
 
 function showFallback(chunks, sl, tl, msg) {
