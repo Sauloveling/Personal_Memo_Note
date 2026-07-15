@@ -24,8 +24,44 @@
 - **圖片**：每篇筆記可附加照片 — 按「📷 加入圖片」選擇（手機可直接拍照），或在頁面上直接 Ctrl+V 貼上。圖片自動壓縮（最長邊 1280px），點縮圖看大圖，跟著筆記一起同步。
 - **備份**：「備份全部」匯出全部筆記為 json（含圖片），「還原」可匯回；「匯出 txt」匯出目前這篇（純文字，不含圖片）。
 
+## 提醒設定
+
+例行公事提醒（例如「每月 4 號申報歐洲 VAT」）由 GitHub Actions 每天台北時間早上 9 點自動檢查發送，電腦手機關機也照樣運作，完全免費。
+
+提醒內容在 app 裡按右上角「⏰ 提醒」新增即可（需先啟用同步）。通知管道要做一次性設定：
+
+### 一、必要：讓機器人能讀到提醒
+
+1. 到 repo 的 **Settings → Secrets and variables → Actions → New repository secret**
+2. Name 填 `GIST_TOKEN`，Secret 貼上**與 app 同步用的同一組金鑰**（`ghp_` 開頭）
+
+### 二、Telegram 通知（約 3 分鐘）
+
+1. 在 Telegram 搜尋 **@BotFather** → 傳送 `/newbot` → 依指示命名 → 取得 `123456:ABC...` 格式的 token
+2. 加入 secret `TELEGRAM_BOT_TOKEN`，值就是上面的 token
+3. 對你剛建立的機器人傳送任意一句話（例如 hi）— **這步不能省，否則機器人無法主動傳訊給你**
+4. 瀏覽器開啟 `https://api.telegram.org/bot<你的TOKEN>/getUpdates`，找到 `"chat":{"id":123456789`
+5. 加入 secret `TELEGRAM_CHAT_ID`，值就是那串數字
+
+### 三、Email 通知
+
+1. Google 帳號需已開啟兩步驟驗證，然後到 <https://myaccount.google.com/apppasswords> 建立「應用程式密碼」（16 碼）
+2. 加入三個 secrets：
+   - `MAIL_USERNAME`：你的 Gmail 地址（寄件者）
+   - `MAIL_APP_PASSWORD`：上面產生的 16 碼應用程式密碼（**不是** Gmail 登入密碼）
+   - `MAIL_TO`：要收信的信箱
+
+### 四、測試
+
+到 repo 的 **Actions → 例行提醒 → Run workflow** 手動執行一次，看 log 是否顯示 `telegram: sent` / `email: sent`。
+
+兩個管道都是選填的 — 只設定 Telegram 也能運作，Email 那組 secrets 沒設就會自動跳過（反之亦然）。
+
 ## 注意事項
 
 - 筆記存在「這台裝置的這個瀏覽器」，換裝置不會同步，請定期用「備份全部」留存。
 - 清除瀏覽器資料（cookie／網站資料）會把筆記一起清掉。
 - 線上翻譯使用 Google 翻譯的免費介面（非官方 API），若 Google 調整導致失效，改用「產生分段連結」即可。
+- **同步金鑰等同於你筆記的存取權，只給自己的裝置用，不要分享給別人。**
+- GitHub 會在 repo **連續 60 天沒有任何提交**時自動停用排程工作（會先寄信通知）。若提醒突然不再發送，到 Actions 頁面按 Enable 即可恢復。
+- 排程觸發時間會有幾分鐘到數十分鐘的延遲，這是 GitHub 免費排程的正常現象。

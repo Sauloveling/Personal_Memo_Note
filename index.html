@@ -281,6 +281,26 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .dnote { font-size: 12px; color: var(--text-3); margin-top: 12px; line-height: 1.7; }
 #sync-status-line { font-size: 13px; margin-top: 12px; color: var(--text-2); }
 
+.rem-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; margin-bottom: 6px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+}
+.rem-item.off { opacity: 0.5; }
+.rem-main { flex: 1; min-width: 0; }
+.rem-t { font-size: 14px; font-weight: 500; }
+.rem-s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.rem-item button {
+  border: none; background: none; cursor: pointer;
+  font-size: 12px; padding: 4px 8px; border-radius: 6px;
+  color: var(--text-2); flex-shrink: 0;
+}
+.rem-item button:hover { background: var(--panel-2); }
+.rem-item .rem-del { color: var(--danger); }
+#rem-empty { font-size: 13px; color: var(--text-3); padding: 14px 2px; }
+.dhr { border: none; border-top: 1px solid var(--border); margin: 16px 0 12px; }
+.dsub { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+
 #toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: var(--text); color: var(--bg);
@@ -317,6 +337,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
     <button class="btn" id="export-json" title="備份全部筆記為 json">備份全部</button>
     <button class="btn" id="import-json" title="從 json 備份還原">還原</button>
     <button class="btn danger" id="del-note">刪除</button>
+    <button class="btn" id="rem-btn" title="例行公事提醒">⏰ 提醒</button>
     <button class="btn" id="sync-btn" title="跨裝置自動同步"><span class="dot"></span>同步</button>
     <input type="file" id="import-file" accept=".json" hidden>
   </header>
@@ -380,6 +401,49 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 <div id="toast"></div>
 <div id="lightbox"><img id="lightbox-img" alt="圖片放大檢視"></div>
 
+<div class="overlay" id="rem-overlay">
+  <div class="dialog">
+    <h2>⏰ 例行提醒</h2>
+    <p style="font-size:14px; color:var(--text-2); margin-bottom:12px;">設定後，即使電腦和手機都關機，也會在指定的日子早上 9 點自動通知你（Telegram ＋ Email）。</p>
+
+    <div id="rem-list"></div>
+
+    <hr class="dhr">
+    <div class="dsub">新增提醒</div>
+    <div class="drow">
+      <input type="text" id="rem-text" placeholder="要提醒什麼？例如：申報歐洲 VAT" autocomplete="off">
+    </div>
+    <div class="drow">
+      <select id="rem-type">
+        <option value="monthly">每月</option>
+        <option value="weekly">每週</option>
+        <option value="daily">每天</option>
+        <option value="once">單次</option>
+      </select>
+      <select id="rem-day"></select>
+      <select id="rem-weekday" style="display:none">
+        <option value="1">週一</option>
+        <option value="2">週二</option>
+        <option value="3">週三</option>
+        <option value="4">週四</option>
+        <option value="5">週五</option>
+        <option value="6">週六</option>
+        <option value="0">週日</option>
+      </select>
+      <input type="date" id="rem-date" style="display:none">
+      <button class="btn primary" id="rem-add">＋ 新增</button>
+    </div>
+
+    <div id="rem-status-line" style="font-size:13px; margin-top:12px; color:var(--text-2);"></div>
+
+    <div class="drow">
+      <span class="spacer"></span>
+      <button class="btn" id="rem-close">關閉</button>
+    </div>
+    <p class="dnote">提醒儲存在你的同步空間，手機和電腦共用同一份。通知由 GitHub 的排程機器人發送 — 需要先完成一次性設定，詳見 <a href="https://github.com/Sauloveling/Personal_Memo_Note#提醒設定" target="_blank" rel="noopener" style="color:var(--accent)">設定說明</a>。</p>
+  </div>
+</div>
+
 <div class="overlay" id="sync-overlay">
   <div class="dialog">
     <h2>☁️ 跨裝置自動同步</h2>
@@ -416,7 +480,10 @@ const LS_ACTIVE = 'tmemo_active_v1';
 const LS_TOKEN = 'tmemo_token_v1';
 const LS_GIST = 'tmemo_gist_v1';
 const LS_DELETED = 'tmemo_deleted_v1';
+const LS_REMS = 'tmemo_reminders_v1';
+const LS_REMS_DEL = 'tmemo_reminders_deleted_v1';
 const SYNC_FILE = 'translate-memo-sync.json';
+const REM_FILE = 'reminders.json';
 
 const $ = id => document.getElementById(id);
 const editor = $('editor');
@@ -426,6 +493,10 @@ let activeId = null;
 let saveTimer = null;
 let deleted = {};
 try { deleted = JSON.parse(localStorage.getItem(LS_DELETED)) || {}; } catch { deleted = {}; }
+let reminders = [];
+try { reminders = JSON.parse(localStorage.getItem(LS_REMS)) || []; } catch { reminders = []; }
+let remDeleted = {};
+try { remDeleted = JSON.parse(localStorage.getItem(LS_REMS_DEL)) || {}; } catch { remDeleted = {}; }
 
 function load() {
   try { notes = JSON.parse(localStorage.getItem(LS_NOTES)) || []; }
@@ -445,6 +516,8 @@ function persist() {
     localStorage.setItem(LS_NOTES, JSON.stringify(notes));
     localStorage.setItem(LS_ACTIVE, activeId || '');
     localStorage.setItem(LS_DELETED, JSON.stringify(deleted));
+    localStorage.setItem(LS_REMS, JSON.stringify(reminders));
+    localStorage.setItem(LS_REMS_DEL, JSON.stringify(remDeleted));
   } catch (e) {
     toast('⚠️ 本機儲存空間已滿，請刪除一些圖片或筆記');
     throw e;
@@ -994,6 +1067,119 @@ document.addEventListener('paste', e => {
   }
 });
 
+function remSchedText(r) {
+  if (r.type === 'daily') return '每天';
+  if (r.type === 'weekly') return '每週' + ['日', '一', '二', '三', '四', '五', '六'][r.weekday];
+  if (r.type === 'once') return r.date + ' 單次';
+  return '每月 ' + r.day + ' 號' + (r.day > 28 ? '（該月不足則當月最後一天）' : '');
+}
+
+function renderReminders() {
+  const box = $('rem-list');
+  box.innerHTML = '';
+  const list = reminders.slice().sort((a, b) => (a.created || 0) - (b.created || 0));
+  if (!list.length) {
+    const d = document.createElement('div');
+    d.id = 'rem-empty';
+    d.textContent = '還沒有提醒。在下面新增第一個例行公事吧。';
+    box.appendChild(d);
+    return;
+  }
+  for (const r of list) {
+    const item = document.createElement('div');
+    item.className = 'rem-item' + (r.enabled === false ? ' off' : '');
+    const main = document.createElement('div');
+    main.className = 'rem-main';
+    const t = document.createElement('div');
+    t.className = 'rem-t';
+    t.textContent = r.text;
+    const s = document.createElement('div');
+    s.className = 'rem-s';
+    s.textContent = remSchedText(r) + (r.lastSent ? '・上次通知 ' + r.lastSent : '');
+    main.appendChild(t); main.appendChild(s);
+    item.appendChild(main);
+
+    const toggle = document.createElement('button');
+    toggle.textContent = r.enabled === false ? '已停用' : '啟用中';
+    toggle.title = '點一下切換';
+    toggle.onclick = () => {
+      r.enabled = r.enabled === false;
+      r.updated = Date.now();
+      persist();
+      renderReminders();
+      scheduleSync();
+    };
+    item.appendChild(toggle);
+
+    const del = document.createElement('button');
+    del.className = 'rem-del';
+    del.textContent = '刪除';
+    del.onclick = () => {
+      if (!confirm('刪除提醒「' + r.text + '」？')) return;
+      remDeleted[r.id] = Date.now();
+      reminders = reminders.filter(x => x.id !== r.id);
+      persist();
+      renderReminders();
+      scheduleSync();
+      toast('已刪除提醒');
+    };
+    item.appendChild(del);
+    box.appendChild(item);
+  }
+}
+
+(function initRemDays() {
+  const sel = $('rem-day');
+  for (let i = 1; i <= 31; i++) {
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = i + ' 號';
+    sel.appendChild(o);
+  }
+})();
+
+$('rem-type').addEventListener('change', () => {
+  const t = $('rem-type').value;
+  $('rem-day').style.display = t === 'monthly' ? '' : 'none';
+  $('rem-weekday').style.display = t === 'weekly' ? '' : 'none';
+  $('rem-date').style.display = t === 'once' ? '' : 'none';
+});
+
+$('rem-add').onclick = () => {
+  const text = $('rem-text').value.trim();
+  if (!text) { toast('請先填寫提醒內容'); return; }
+  const type = $('rem-type').value;
+  const r = { id: newId(), text, type, enabled: true, created: Date.now(), updated: Date.now() };
+  if (type === 'monthly') r.day = parseInt($('rem-day').value, 10);
+  if (type === 'weekly') r.weekday = parseInt($('rem-weekday').value, 10);
+  if (type === 'once') {
+    if (!$('rem-date').value) { toast('請選擇日期'); return; }
+    r.date = $('rem-date').value;
+  }
+  reminders.push(r);
+  persist();
+  $('rem-text').value = '';
+  renderReminders();
+  scheduleSync();
+  toast('已新增提醒');
+};
+
+$('rem-text').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('rem-add').click(); }
+});
+
+$('rem-btn').onclick = () => {
+  renderReminders();
+  $('rem-status-line').textContent = getToken()
+    ? ''
+    : '⚠️ 提醒需要先啟用「同步」才會生效，請先完成同步設定。';
+  $('rem-overlay').classList.add('show');
+};
+$('rem-close').onclick = () => $('rem-overlay').classList.remove('show');
+$('rem-overlay').addEventListener('click', e => {
+  if (e.target === $('rem-overlay')) $('rem-overlay').classList.remove('show');
+});
+
 let toastTimer = null;
 function toast(msg) {
   const t = $('toast');
@@ -1048,16 +1234,48 @@ async function findOrCreateGist() {
   return created.id;
 }
 
-async function pullRemote(id) {
-  const g = await (await gh('/gists/' + id)).json();
-  const f = g.files && g.files[SYNC_FILE];
-  if (!f) return { notes: [], deleted: {} };
+async function readGistFile(g, name) {
+  const f = g.files && g.files[name];
+  if (!f) return null;
   let content = f.content;
   if (f.truncated) content = await (await fetch(f.raw_url)).text();
-  try {
-    const d = JSON.parse(content);
-    return { notes: Array.isArray(d.notes) ? d.notes : [], deleted: d.deleted || {} };
-  } catch { return { notes: [], deleted: {} }; }
+  try { return JSON.parse(content); } catch { return null; }
+}
+
+async function pullRemote(id) {
+  const g = await (await gh('/gists/' + id)).json();
+  const d = await readGistFile(g, SYNC_FILE);
+  const rd = await readGistFile(g, REM_FILE);
+  return {
+    notes: d && Array.isArray(d.notes) ? d.notes : [],
+    deleted: (d && d.deleted) || {},
+    reminders: rd && Array.isArray(rd.reminders) ? rd.reminders : [],
+    remDeleted: (rd && rd.deleted) || {},
+    hadRemFile: !!rd
+  };
+}
+
+function mergeReminders(remote) {
+  const del = { ...remote.remDeleted };
+  for (const [id, ts] of Object.entries(remDeleted)) {
+    if (!del[id] || del[id] < ts) del[id] = ts;
+  }
+  const map = new Map();
+  for (const r of remote.reminders) map.set(r.id, r);
+  for (const r of reminders) {
+    const o = map.get(r.id);
+    if (!o) { map.set(r.id, r); continue; }
+    const win = (r.updated || 0) > (o.updated || 0) ? { ...r } : { ...o };
+    const ls = [r.lastSent, o.lastSent].filter(Boolean).sort();
+    if (ls.length) win.lastSent = ls[ls.length - 1];
+    map.set(r.id, win);
+  }
+  const merged = [...map.values()].filter(r => !(del[r.id] && del[r.id] >= (r.updated || 0)));
+  merged.sort((a, b) => (a.created || 0) - (b.created || 0));
+  const changedRemote = JSON.stringify(merged) !== JSON.stringify(remote.reminders) ||
+    JSON.stringify(del) !== JSON.stringify(remote.remDeleted) || !remote.hadRemFile;
+  remDeleted = del;
+  return { merged, changedRemote };
 }
 
 function mergeData(remote) {
@@ -1120,14 +1338,20 @@ async function syncNow(passive) {
     notes = merged;
     normalizeOrders();
     if (changedLocal) applyRemoteToUI();
+    const rem = mergeReminders(remote);
+    const remChanged = JSON.stringify(rem.merged) !== JSON.stringify(reminders);
+    reminders = rem.merged;
+    if (remChanged && $('rem-overlay').classList.contains('show')) renderReminders();
     persist();
+    const files = {};
     if (changedRemote) {
-      await gh('/gists/' + id, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          files: { [SYNC_FILE]: { content: JSON.stringify({ notes, deleted, updated: Date.now() }) } }
-        })
-      });
+      files[SYNC_FILE] = { content: JSON.stringify({ notes, deleted, updated: Date.now() }) };
+    }
+    if (rem.changedRemote) {
+      files[REM_FILE] = { content: JSON.stringify({ reminders, deleted: remDeleted, updated: Date.now() }, null, 2) };
+    }
+    if (Object.keys(files).length) {
+      await gh('/gists/' + id, { method: 'PATCH', body: JSON.stringify({ files }) });
     }
     lastSyncOk = Date.now();
     setSyncUI('ok');
