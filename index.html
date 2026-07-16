@@ -306,6 +306,34 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .rem-item button:hover { background: var(--panel-2); }
 .rem-item .rem-del { color: var(--danger); }
 #rem-empty { font-size: 13px; color: var(--text-3); padding: 14px 2px; }
+
+.rec-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; margin-bottom: 6px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+}
+.rec-main { flex: 1; min-width: 0; }
+.rec-t {
+  font-size: 14px; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rec-s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.rec-p {
+  font-size: 12px; color: var(--text-2); margin-top: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rec-item button {
+  border: none; background: none; cursor: pointer;
+  font-size: 12px; padding: 5px 9px; border-radius: 6px;
+  color: var(--accent); flex-shrink: 0;
+}
+.rec-item button:hover { background: var(--panel-2); }
+.rec-item .rec-purge { color: var(--danger); }
+.rec-empty { font-size: 13px; color: var(--text-3); padding: 14px 2px; }
+.dlist { max-height: 46vh; overflow-y: auto; }
+#ver-btn, #trash-btn { border: none; background: none; color: var(--text-3);
+  font-size: 12px; cursor: pointer; padding: 2px 6px; border-radius: 5px; }
+#ver-btn:hover, #trash-btn:hover { background: var(--panel-2); color: var(--text); }
 .dhr { border: none; border-top: 1px solid var(--border); margin: 16px 0 12px; }
 .dsub { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
 
@@ -345,6 +373,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
     <button class="btn" id="export-json" title="備份全部筆記為 json">備份全部</button>
     <button class="btn" id="import-json" title="從 json 備份還原">還原</button>
     <button class="btn danger" id="del-note">刪除</button>
+    <button class="btn" id="trash-open" title="復原刪掉的筆記">🗑 垃圾桶</button>
     <button class="btn" id="rem-btn" title="例行公事提醒">⏰ 提醒</button>
     <button class="btn" id="sync-btn" title="跨裝置自動同步"><span class="dot"></span>同步</button>
     <input type="file" id="import-file" accept=".json" hidden>
@@ -366,6 +395,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
       <div class="statusbar">
         <span id="save-state">尚未儲存</span>
         <span id="char-count">字數 0</span>
+        <button id="ver-btn" title="回到這篇筆記之前的版本">🕘 版本記錄</button>
         <span id="chunk-info"></span>
       </div>
 
@@ -408,6 +438,31 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 </div>
 <div id="toast"></div>
 <div id="lightbox"><img id="lightbox-img" alt="圖片放大檢視"></div>
+
+<div class="overlay" id="trash-overlay">
+  <div class="dialog">
+    <h2>🗑 垃圾桶</h2>
+    <p style="font-size:14px; color:var(--text-2); margin-bottom:12px;">刪掉的筆記會先放這裡 30 天，隨時可以復原。超過 30 天才會真的消失。</p>
+    <div id="trash-list" class="dlist"></div>
+    <div class="drow">
+      <span class="spacer"></span>
+      <button class="btn" id="trash-close">關閉</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ver-overlay">
+  <div class="dialog">
+    <h2>🕘 版本記錄</h2>
+    <p style="font-size:14px; color:var(--text-2); margin-bottom:12px;">這篇筆記編輯過程中的自動存檔。點「復原」就會回到那個版本 — 復原前會先把目前的內容也存成一個版本，所以不用怕復原錯。</p>
+    <div id="ver-list" class="dlist"></div>
+    <div class="drow">
+      <span class="spacer"></span>
+      <button class="btn" id="ver-close">關閉</button>
+    </div>
+    <p class="dnote">版本記錄存在這台裝置上，不會佔用同步空間，因此不會跟著手機共用。編輯時每隔一段時間自動存檔，最多保留 10 個版本。</p>
+  </div>
+</div>
 
 <div class="overlay" id="rem-overlay">
   <div class="dialog">
@@ -490,6 +545,10 @@ const LS_GIST = 'tmemo_gist_v1';
 const LS_DELETED = 'tmemo_deleted_v1';
 const LS_REMS = 'tmemo_reminders_v1';
 const LS_REMS_DEL = 'tmemo_reminders_deleted_v1';
+const LS_VERSIONS = 'tmemo_versions_v1';
+const TRASH_DAYS = 30;
+const MAX_VERSIONS = 10;
+const VER_INTERVAL = 45000;
 const SYNC_FILE = 'translate-memo-sync.json';
 const REM_FILE = 'reminders.json';
 
@@ -505,17 +564,22 @@ let reminders = [];
 try { reminders = JSON.parse(localStorage.getItem(LS_REMS)) || []; } catch { reminders = []; }
 let remDeleted = {};
 try { remDeleted = JSON.parse(localStorage.getItem(LS_REMS_DEL)) || {}; } catch { remDeleted = {}; }
+let versions = {};
+try { versions = JSON.parse(localStorage.getItem(LS_VERSIONS)) || {}; } catch { versions = {}; }
 
 function load() {
   try { notes = JSON.parse(localStorage.getItem(LS_NOTES)) || []; }
   catch { notes = []; }
   normalizeOrders();
+  const purged = purgeOldTrash();
   activeId = localStorage.getItem(LS_ACTIVE);
-  if (!notes.length) {
+  const live = liveNotes();
+  if (!live.length) {
     createNote();
   } else {
-    if (!notes.find(n => n.id === activeId)) activeId = notes[0].id;
+    if (!live.find(n => n.id === activeId)) activeId = live[0].id;
     openNote(activeId);
+    if (purged) persist();
   }
 }
 
@@ -546,6 +610,27 @@ function isEmptyNote(n) {
   return !(n.text || '').trim() && !(n.title || '').trim() && !((n.images || []).length);
 }
 
+function liveNotes() {
+  return notes.filter(n => !n.trashed);
+}
+
+function trashedNotes() {
+  return notes.filter(n => n.trashed).sort((a, b) => b.trashed - a.trashed);
+}
+
+function purgeOldTrash() {
+  const cutoff = Date.now() - TRASH_DAYS * 86400000;
+  const gone = notes.filter(n => n.trashed && n.trashed < cutoff);
+  if (!gone.length) return false;
+  for (const n of gone) {
+    deleted[n.id] = Date.now();
+    delete versions[n.id];
+  }
+  notes = notes.filter(n => !(n.trashed && n.trashed < cutoff));
+  saveVersions();
+  return true;
+}
+
 function effOrder(n) {
   return (typeof n.order === 'number') ? n.order : -(n.updated || 0);
 }
@@ -567,10 +652,11 @@ function topOrder() {
 
 function moveNote(id, dir) {
   sortNotes();
-  const i = notes.findIndex(n => n.id === id);
+  const live = liveNotes();
+  const i = live.findIndex(n => n.id === id);
   const j = i + dir;
-  if (i < 0 || j < 0 || j >= notes.length) return;
-  const a = notes[i], b = notes[j];
+  if (i < 0 || j < 0 || j >= live.length) return;
+  const a = live[i], b = live[j];
   const ao = effOrder(a), bo = effOrder(b);
   a.order = bo;
   b.order = ao;
@@ -626,7 +712,7 @@ function renderList(filter) {
   const box = $('sidebar');
   box.innerHTML = '';
   const kw = (filter || '').toLowerCase();
-  const shown = notes.filter(n => !kw || n.text.toLowerCase().includes(kw) || (n.title || '').toLowerCase().includes(kw));
+  const shown = liveNotes().filter(n => !kw || n.text.toLowerCase().includes(kw) || (n.title || '').toLowerCase().includes(kw));
   if (!shown.length) {
     const d = document.createElement('div');
     d.id = 'empty-list';
@@ -684,10 +770,41 @@ function updateStatus() {
   }
 }
 
+function saveVersions() {
+  try {
+    localStorage.setItem(LS_VERSIONS, JSON.stringify(versions));
+  } catch {
+    // 版本記錄是輔助功能，空間不足時先砍舊版本，絕不能拖累筆記本身的儲存
+    let trimmed = false;
+    for (const id of Object.keys(versions)) {
+      if (versions[id].length > 3) { versions[id] = versions[id].slice(-3); trimmed = true; }
+    }
+    try {
+      localStorage.setItem(LS_VERSIONS, JSON.stringify(versions));
+    } catch {
+      versions = {};
+      try { localStorage.removeItem(LS_VERSIONS); } catch {}
+    }
+    if (trimmed) console.warn('version history trimmed to free space');
+  }
+}
+
+function snapshot(n, force) {
+  if (!n || isEmptyNote(n)) return;
+  const list = versions[n.id] || (versions[n.id] = []);
+  const last = list[list.length - 1];
+  if (last && last.text === n.text && last.title === (n.title || '')) return;
+  if (!force && last && Date.now() - last.ts < VER_INTERVAL) return;
+  list.push({ ts: Date.now(), title: n.title || '', text: n.text });
+  while (list.length > MAX_VERSIONS) list.shift();
+  saveVersions();
+}
+
 function commitActive() {
   saveTimer = null;
   const n = activeNote();
   if (!n) return;
+  snapshot(n);
   n.title = $('note-title').value.trim();
   n.text = editor.value;
   n.updated = Date.now();
@@ -728,16 +845,94 @@ $('new-note').onclick = createNote;
 $('del-note').onclick = () => {
   const n = activeNote();
   if (!n) return;
-  if (!confirm('確定要刪除「' + noteTitle(n) + '」嗎？此動作無法復原。')) return;
-  deleted[n.id] = Date.now();
-  notes = notes.filter(x => x.id !== n.id);
-  if (!notes.length) { createNote(); }
-  else { openNote(notes[0].id); }
+  if (isEmptyNote(n)) {
+    deleted[n.id] = Date.now();
+    notes = notes.filter(x => x.id !== n.id);
+  } else {
+    snapshot(n, true);
+    n.trashed = Date.now();
+    n.updated = Date.now();
+  }
+  const rest = liveNotes();
+  if (!rest.length) { createNote(); }
+  else { openNote(rest[0].id); }
   persist();
   renderList($('search').value);
-  toast('已刪除');
+  toast('已移到垃圾桶，可在「🗑 垃圾桶」復原');
   scheduleSync();
 };
+
+function renderTrash() {
+  const box = $('trash-list');
+  box.innerHTML = '';
+  const list = trashedNotes();
+  if (!list.length) {
+    const d = document.createElement('div');
+    d.className = 'rec-empty';
+    d.textContent = '垃圾桶是空的。';
+    box.appendChild(d);
+    return;
+  }
+  for (const n of list) {
+    const item = document.createElement('div');
+    item.className = 'rec-item';
+    const main = document.createElement('div');
+    main.className = 'rec-main';
+    const t = document.createElement('div');
+    t.className = 'rec-t';
+    t.textContent = noteTitle(n);
+    const s = document.createElement('div');
+    s.className = 'rec-s';
+    const daysLeft = Math.max(0, TRASH_DAYS - Math.floor((Date.now() - n.trashed) / 86400000));
+    s.textContent = n.text.length.toLocaleString() + ' 字' +
+      ((n.images || []).length ? '・📷' + n.images.length : '') +
+      '・' + fmtDate(n.trashed) + ' 刪除・剩 ' + daysLeft + ' 天';
+    main.appendChild(t); main.appendChild(s);
+    const p = document.createElement('div');
+    p.className = 'rec-p';
+    p.textContent = n.text.trim().split('\n').filter(l => l.trim())[0] || '（沒有內文）';
+    main.appendChild(p);
+    item.appendChild(main);
+
+    const restore = document.createElement('button');
+    restore.textContent = '復原';
+    restore.onclick = () => {
+      delete n.trashed;
+      n.updated = Date.now();
+      persist();
+      renderTrash();
+      renderList($('search').value);
+      openNote(n.id);
+      scheduleSync();
+      toast('已復原「' + noteTitle(n) + '」');
+    };
+    item.appendChild(restore);
+
+    const purge = document.createElement('button');
+    purge.className = 'rec-purge';
+    purge.textContent = '永久刪除';
+    purge.onclick = () => {
+      if (!confirm('永久刪除「' + noteTitle(n) + '」？這次真的無法復原。')) return;
+      deleted[n.id] = Date.now();
+      notes = notes.filter(x => x.id !== n.id);
+      delete versions[n.id];
+      saveVersions();
+      persist();
+      renderTrash();
+      renderList($('search').value);
+      scheduleSync();
+      toast('已永久刪除');
+    };
+    item.appendChild(purge);
+    box.appendChild(item);
+  }
+}
+
+$('trash-open').onclick = () => { renderTrash(); $('trash-overlay').classList.add('show'); };
+$('trash-close').onclick = () => $('trash-overlay').classList.remove('show');
+$('trash-overlay').addEventListener('click', e => {
+  if (e.target === $('trash-overlay')) $('trash-overlay').classList.remove('show');
+});
 
 $('search').addEventListener('input', e => renderList(e.target.value));
 
@@ -785,7 +980,9 @@ $('import-file').addEventListener('change', e => {
       for (const n of arr) {
         if (!n || typeof n.text !== 'string') continue;
         if (notes.find(x => x.id === n.id)) continue;
-        notes.push({ id: n.id || newId(), title: n.title || '', text: n.text, images: Array.isArray(n.images) ? n.images : [], order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() });
+        const rec = { id: n.id || newId(), title: n.title || '', text: n.text, images: Array.isArray(n.images) ? n.images : [], order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() };
+        if (n.trashed) rec.trashed = n.trashed;
+        notes.push(rec);
         added++;
       }
       sortNotes();
@@ -1288,6 +1485,82 @@ $('rem-overlay').addEventListener('click', e => {
   if (e.target === $('rem-overlay')) closeRemDialog();
 });
 
+function fmtTime(ts) {
+  const d = new Date(ts);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  return sameDay ? '今天 ' + hm : (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hm;
+}
+
+function renderVersions() {
+  const box = $('ver-list');
+  box.innerHTML = '';
+  const n = activeNote();
+  const list = (n && versions[n.id] ? versions[n.id] : []).slice().reverse();
+  if (!list.length) {
+    const d = document.createElement('div');
+    d.className = 'rec-empty';
+    d.textContent = '這篇筆記還沒有版本記錄。編輯一段時間後就會自動存檔。';
+    box.appendChild(d);
+    return;
+  }
+  list.forEach(v => {
+    const item = document.createElement('div');
+    item.className = 'rec-item';
+    const main = document.createElement('div');
+    main.className = 'rec-main';
+    const t = document.createElement('div');
+    t.className = 'rec-t';
+    t.textContent = fmtTime(v.ts) + (v.title ? '・' + v.title : '');
+    const s = document.createElement('div');
+    s.className = 'rec-s';
+    const diff = v.text.length - editor.value.length;
+    s.textContent = v.text.length.toLocaleString() + ' 字' +
+      (diff === 0 ? '（和目前一樣）' : diff > 0 ? '（比目前多 ' + diff.toLocaleString() + ' 字）'
+                                               : '（比目前少 ' + (-diff).toLocaleString() + ' 字）');
+    main.appendChild(t); main.appendChild(s);
+    const p = document.createElement('div');
+    p.className = 'rec-p';
+    p.textContent = v.text.trim().split('\n').filter(l => l.trim())[0] || '（空白）';
+    main.appendChild(p);
+    item.appendChild(main);
+
+    const restore = document.createElement('button');
+    restore.textContent = '復原';
+    restore.onclick = () => {
+      const cur = activeNote();
+      if (!cur) return;
+      cur.title = $('note-title').value.trim();
+      cur.text = editor.value;
+      snapshot(cur, true);
+      cur.title = v.title;
+      cur.text = v.text;
+      cur.updated = Date.now();
+      $('note-title').value = v.title;
+      editor.value = v.text;
+      persist();
+      updateStatus();
+      renderList($('search').value);
+      renderVersions();
+      scheduleSync();
+      toast('已復原到 ' + fmtTime(v.ts) + ' 的版本');
+    };
+    item.appendChild(restore);
+    box.appendChild(item);
+  });
+}
+
+$('ver-btn').onclick = () => {
+  flushSave();
+  renderVersions();
+  $('ver-overlay').classList.add('show');
+};
+$('ver-close').onclick = () => $('ver-overlay').classList.remove('show');
+$('ver-overlay').addEventListener('click', e => {
+  if (e.target === $('ver-overlay')) $('ver-overlay').classList.remove('show');
+});
+
 let toastTimer = null;
 function toast(msg) {
   const t = $('toast');
@@ -1409,15 +1682,16 @@ function mergeData(remote) {
 }
 
 function applyRemoteToUI() {
-  if (!notes.length) { createNote(); return; }
+  const live = liveNotes();
+  if (!live.length) { createNote(); return; }
   const titleInput = $('note-title');
-  let n = notes.find(x => x.id === activeId);
+  let n = live.find(x => x.id === activeId);
   const idle = document.activeElement !== editor && document.activeElement !== titleInput;
   if (n && isEmptyNote(n) && !editor.value.trim() && !titleInput.value.trim()) {
-    const better = notes.find(x => !isEmptyNote(x));
+    const better = live.find(x => !isEmptyNote(x));
     if (better) n = better;
   }
-  if (!n) n = notes[0];
+  if (!n) n = live[0];
   if (n.id !== activeId) {
     activeId = n.id;
     titleInput.value = n.title || '';
