@@ -287,6 +287,14 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
 }
 .rem-item.off { opacity: 0.5; }
+.rem-item.editing { flex-direction: column; align-items: stretch; border-color: var(--accent-border); }
+.rem-edit-text { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--text); font-size: 14px; font-family: inherit; }
+.rem-edit-text:focus { outline: none; border-color: var(--accent-border); }
+.rem-edit-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.rem-edit-row select, .rem-edit-row input[type=date] {
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--text); font-size: 13px; }
 .rem-main { flex: 1; min-width: 0; }
 .rem-t { font-size: 14px; font-weight: 500; }
 .rem-s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
@@ -1074,6 +1082,89 @@ function remSchedText(r) {
   return '每月 ' + r.day + ' 號' + (r.day > 28 ? '（該月不足則當月最後一天）' : '');
 }
 
+let editingRemId = null;
+
+function buildSelect(pairs, val) {
+  const s = document.createElement('select');
+  for (const [v, label] of pairs) {
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = label;
+    s.appendChild(o);
+  }
+  if (val !== undefined && val !== null) s.value = String(val);
+  return s;
+}
+
+const DAY_PAIRS = Array.from({ length: 31 }, (_, i) => [String(i + 1), (i + 1) + ' 號']);
+const WD_PAIRS = [['1', '週一'], ['2', '週二'], ['3', '週三'], ['4', '週四'],
+                  ['5', '週五'], ['6', '週六'], ['0', '週日']];
+const TYPE_PAIRS = [['monthly', '每月'], ['weekly', '每週'], ['daily', '每天'], ['once', '單次']];
+
+function renderEditRow(r, item) {
+  item.classList.add('editing');
+  const ti = document.createElement('input');
+  ti.type = 'text';
+  ti.className = 'rem-edit-text';
+  ti.value = r.text;
+  item.appendChild(ti);
+
+  const row = document.createElement('div');
+  row.className = 'rem-edit-row';
+  const ty = buildSelect(TYPE_PAIRS, r.type);
+  const dsel = buildSelect(DAY_PAIRS, r.day || 1);
+  const wsel = buildSelect(WD_PAIRS, r.weekday === undefined ? 1 : r.weekday);
+  const dt = document.createElement('input');
+  dt.type = 'date';
+  dt.value = r.date || '';
+
+  const vis = () => {
+    dsel.style.display = ty.value === 'monthly' ? '' : 'none';
+    wsel.style.display = ty.value === 'weekly' ? '' : 'none';
+    dt.style.display = ty.value === 'once' ? '' : 'none';
+  };
+  ty.onchange = vis;
+  vis();
+  row.appendChild(ty); row.appendChild(dsel); row.appendChild(wsel); row.appendChild(dt);
+
+  const spacer = document.createElement('span');
+  spacer.className = 'spacer';
+  row.appendChild(spacer);
+
+  const save = document.createElement('button');
+  save.className = 'btn primary';
+  save.textContent = '儲存';
+  save.onclick = () => {
+    const text = ti.value.trim();
+    if (!text) { toast('提醒內容不能空白'); return; }
+    if (ty.value === 'once' && !dt.value) { toast('請選擇日期'); return; }
+    r.text = text;
+    r.type = ty.value;
+    delete r.day; delete r.weekday; delete r.date;
+    if (r.type === 'monthly') r.day = parseInt(dsel.value, 10);
+    if (r.type === 'weekly') r.weekday = parseInt(wsel.value, 10);
+    if (r.type === 'once') r.date = dt.value;
+    r.updated = Date.now();
+    editingRemId = null;
+    persist();
+    renderReminders();
+    scheduleSync();
+    toast('已儲存修改');
+  };
+  const cancel = document.createElement('button');
+  cancel.className = 'btn';
+  cancel.textContent = '取消';
+  cancel.onclick = () => { editingRemId = null; renderReminders(); };
+  row.appendChild(save); row.appendChild(cancel);
+  item.appendChild(row);
+
+  ti.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); save.click(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
+  });
+  setTimeout(() => ti.focus(), 0);
+}
+
 function renderReminders() {
   const box = $('rem-list');
   box.innerHTML = '';
@@ -1088,6 +1179,13 @@ function renderReminders() {
   for (const r of list) {
     const item = document.createElement('div');
     item.className = 'rem-item' + (r.enabled === false ? ' off' : '');
+
+    if (r.id === editingRemId) {
+      renderEditRow(r, item);
+      box.appendChild(item);
+      continue;
+    }
+
     const main = document.createElement('div');
     main.className = 'rem-main';
     const t = document.createElement('div');
@@ -1098,6 +1196,11 @@ function renderReminders() {
     s.textContent = remSchedText(r) + (r.lastSent ? '・上次通知 ' + r.lastSent : '');
     main.appendChild(t); main.appendChild(s);
     item.appendChild(main);
+
+    const edit = document.createElement('button');
+    edit.textContent = '編輯';
+    edit.onclick = () => { editingRemId = r.id; renderReminders(); };
+    item.appendChild(edit);
 
     const toggle = document.createElement('button');
     toggle.textContent = r.enabled === false ? '已停用' : '啟用中';
@@ -1169,15 +1272,20 @@ $('rem-text').addEventListener('keydown', e => {
 });
 
 $('rem-btn').onclick = () => {
+  editingRemId = null;
   renderReminders();
   $('rem-status-line').textContent = getToken()
     ? ''
     : '⚠️ 提醒需要先啟用「同步」才會生效，請先完成同步設定。';
   $('rem-overlay').classList.add('show');
 };
-$('rem-close').onclick = () => $('rem-overlay').classList.remove('show');
+function closeRemDialog() {
+  editingRemId = null;
+  $('rem-overlay').classList.remove('show');
+}
+$('rem-close').onclick = closeRemDialog;
 $('rem-overlay').addEventListener('click', e => {
-  if (e.target === $('rem-overlay')) $('rem-overlay').classList.remove('show');
+  if (e.target === $('rem-overlay')) closeRemDialog();
 });
 
 let toastTimer = null;
@@ -1341,7 +1449,7 @@ async function syncNow(passive) {
     const rem = mergeReminders(remote);
     const remChanged = JSON.stringify(rem.merged) !== JSON.stringify(reminders);
     reminders = rem.merged;
-    if (remChanged && $('rem-overlay').classList.contains('show')) renderReminders();
+    if (remChanged && $('rem-overlay').classList.contains('show') && !editingRemId) renderReminders();
     persist();
     const files = {};
     if (changedRemote) {
