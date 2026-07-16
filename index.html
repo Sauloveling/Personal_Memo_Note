@@ -289,15 +289,24 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .rem-item.off { opacity: 0.5; }
 .rem-item.editing { flex-direction: column; align-items: stretch; border-color: var(--accent-border); }
 .rem-edit-text { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--panel); color: var(--text); font-size: 14px; font-family: inherit; }
+  background: var(--panel); color: var(--text); font-size: 14px; font-family: inherit;
+  min-height: 62px; resize: vertical; line-height: 1.5; overflow-wrap: anywhere; }
 .rem-edit-text:focus { outline: none; border-color: var(--accent-border); }
 .rem-edit-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .rem-edit-row select, .rem-edit-row input[type=date] {
   padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--panel); color: var(--text); font-size: 13px; }
 .rem-main { flex: 1; min-width: 0; }
-.rem-t { font-size: 14px; font-weight: 500; }
-.rem-s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.rem-t {
+  font-size: 14px; font-weight: 500;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rem-s {
+  font-size: 12px; color: var(--text-3); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .rem-item button {
   border: none; background: none; cursor: pointer;
   font-size: 12px; padding: 4px 8px; border-radius: 6px;
@@ -1300,8 +1309,7 @@ const TYPE_PAIRS = [['monthly', '每月'], ['weekly', '每週'], ['daily', '每�
 
 function renderEditRow(r, item) {
   item.classList.add('editing');
-  const ti = document.createElement('input');
-  ti.type = 'text';
+  const ti = document.createElement('textarea');
   ti.className = 'rem-edit-text';
   ti.value = r.text;
   item.appendChild(ti);
@@ -1355,11 +1363,20 @@ function renderEditRow(r, item) {
   row.appendChild(save); row.appendChild(cancel);
   item.appendChild(row);
 
+  const autoGrow = () => {
+    ti.style.height = 'auto';
+    ti.style.height = Math.min(ti.scrollHeight + 2, 220) + 'px';
+  };
+  ti.addEventListener('input', autoGrow);
   ti.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); save.click(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save.click(); }
     if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
   });
-  setTimeout(() => ti.focus(), 0);
+  setTimeout(() => {
+    autoGrow();
+    ti.focus();
+    ti.setSelectionRange(ti.value.length, ti.value.length);
+  }, 0);
 }
 
 function renderReminders() {
