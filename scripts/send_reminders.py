@@ -5,9 +5,13 @@
   GIST_TOKEN          必要，與備忘簿同步用的同一組金鑰
   TELEGRAM_BOT_TOKEN  選填，沒設就跳過 Telegram
   TELEGRAM_CHAT_ID    選填，同上
-  MAIL_TO             選填，沒設就跳過 Email
-  MAIL_USERNAME       選填，寄件的 Gmail 帳號
-  MAIL_APP_PASSWORD   選填，Gmail 應用程式密碼
+  SMTP_HOST           選填，沒設就跳過 Email。例：smtp.gmail.com
+  SMTP_PORT           選填，預設 465（SSL）或 587（STARTTLS）
+  SMTP_USERNAME       選填，SMTP 登入帳號
+  SMTP_PASSWORD       選填，SMTP 密碼（Gmail 需用應用程式密碼）
+  SMTP_USE_SSL        選填，true/false，預設依 port 判斷
+  ALERT_EMAIL_FROM    選填，寄件者，沒設就用 SMTP_USERNAME
+  ALERT_EMAIL_TO      選填，收件者，沒設就用 SMTP_USERNAME
 """
 import calendar
 import json
@@ -30,9 +34,20 @@ TAIPEI = timezone(timedelta(hours=8))
 GIST_TOKEN = os.environ.get('GIST_TOKEN', '')
 TG_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TG_CHAT = os.environ.get('TELEGRAM_CHAT_ID', '')
-MAIL_TO = os.environ.get('MAIL_TO', '')
-MAIL_USER = os.environ.get('MAIL_USERNAME', '')
-MAIL_PASS = os.environ.get('MAIL_APP_PASSWORD', '')
+SMTP_HOST = os.environ.get('SMTP_HOST', '')
+SMTP_PORT = int(os.environ.get('SMTP_PORT') or 465)
+SMTP_USER = os.environ.get('SMTP_USERNAME', '')
+SMTP_PASS = os.environ.get('SMTP_PASSWORD', '')
+MAIL_FROM = os.environ.get('ALERT_EMAIL_FROM', '') or SMTP_USER
+MAIL_TO = os.environ.get('ALERT_EMAIL_TO', '') or SMTP_USER
+
+_ssl_env = os.environ.get('SMTP_USE_SSL', '').strip().lower()
+if _ssl_env in ('1', 'true', 'yes', 'on'):
+    USE_SSL = True
+elif _ssl_env in ('0', 'false', 'no', 'off'):
+    USE_SSL = False
+else:
+    USE_SSL = SMTP_PORT == 465
 
 
 def gh(path, method='GET', body=None):
@@ -110,21 +125,28 @@ def send_telegram(lines):
 
 
 def send_email(lines):
-    if not (MAIL_TO and MAIL_USER and MAIL_PASS):
+    if not (SMTP_HOST and SMTP_USER and SMTP_PASS and MAIL_TO):
         print('email: skipped (secrets not set)')
         return False
     msg = EmailMessage()
     msg['Subject'] = '⏰ 今天的例行提醒（%d 項）' % len(lines)
-    msg['From'] = MAIL_USER
+    msg['From'] = MAIL_FROM
     msg['To'] = MAIL_TO
     msg.set_content('今天要處理的例行公事：\n\n' + '\n'.join('• ' + l for l in lines) +
                     '\n\n— 翻譯備忘簿 https://sauloveling.github.io/Personal_Memo_Note/')
     try:
         ctx = ssl.create_default_context()
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=ctx) as s:
-            s.login(MAIL_USER, MAIL_PASS)
-            s.send_message(msg)
-        print('email: sent to', MAIL_TO)
+        if USE_SSL:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx, timeout=30) as s:
+                s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+                s.starttls(context=ctx)
+                s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+        print('email: sent to', MAIL_TO, 'via %s:%d' % (SMTP_HOST, SMTP_PORT),
+              '(SSL)' if USE_SSL else '(STARTTLS)')
         return True
     except Exception as e:
         print('email: FAILED', type(e).__name__, e)

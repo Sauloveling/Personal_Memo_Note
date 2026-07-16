@@ -45,11 +45,17 @@
 
 ### 三、Email 通知
 
-1. Google 帳號需已開啟兩步驟驗證，然後到 <https://myaccount.google.com/apppasswords> 建立「應用程式密碼」（16 碼）
-2. 加入三個 secrets：
-   - `MAIL_USERNAME`：你的 Gmail 地址（寄件者）
-   - `MAIL_APP_PASSWORD`：上面產生的 16 碼應用程式密碼（**不是** Gmail 登入密碼）
-   - `MAIL_TO`：要收信的信箱
+支援任何 SMTP 伺服器，secret 名稱與常見 `.env` 慣例一致：
+
+| Secret | 說明 |
+|---|---|
+| `SMTP_HOST` | 例：`smtp.gmail.com`。沒設就跳過 Email |
+| `SMTP_PORT` | 465（SSL）或 587（STARTTLS），預設 465 |
+| `SMTP_USERNAME` | SMTP 登入帳號 |
+| `SMTP_PASSWORD` | SMTP 密碼。Gmail 需用<a href="https://myaccount.google.com/apppasswords">應用程式密碼</a>（16 碼），**不是**登入密碼 |
+| `SMTP_USE_SSL` | 選填，`true`/`false`。沒設就依 port 自動判斷（465→SSL，其餘→STARTTLS） |
+| `ALERT_EMAIL_FROM` | 選填，寄件者。沒設就用 `SMTP_USERNAME` |
+| `ALERT_EMAIL_TO` | 收件者。沒設就用 `SMTP_USERNAME` |
 
 ### 四、測試
 
