@@ -409,6 +409,30 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .day-ev-row button:hover { background: var(--panel-2); }
 #day-empty { font-size: 13px; color: var(--text-3); padding: 8px 2px 12px; }
 
+#quick-input {
+  width: 100%; min-height: 110px; padding: 10px 12px; margin: 8px 0;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--text); font-size: 14px;
+  font-family: inherit; line-height: 1.6; resize: vertical;
+}
+#quick-input:focus { outline: none; border-color: var(--accent-border); }
+#quick-ocr-status { font-size: 12px; color: var(--text-2); }
+#quick-preview { max-height: 40vh; overflow-y: auto; margin-top: 4px; }
+#quick-empty { font-size: 13px; color: var(--text-3); padding: 10px 2px; }
+.qc-head { font-size: 13px; font-weight: 500; margin: 10px 0 6px; }
+.qc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.qc-row input[type=checkbox] { width: 18px; height: 18px; flex-shrink: 0; }
+.qc-row input[type=date] {
+  flex-shrink: 0; width: 140px; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel); color: var(--text); font-size: 13px;
+}
+.qc-row input[type=text] {
+  flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel); color: var(--text); font-size: 14px;
+}
+.qc-row input:focus { outline: none; border-color: var(--accent-border); }
+.qc-row.nodate input[type=date] { border-color: var(--warn); }
+
 @media (max-width: 640px) {
   .cal-grid { gap: 2px; }
   .cal-cell { min-height: 62px; padding: 3px; }
@@ -570,11 +594,33 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
       <span class="cal-title" id="cal-title">2026 年 8 月</span>
       <button class="cal-nav" id="cal-next" title="下個月">›</button>
       <button class="btn" id="cal-today">今天</button>
+      <button class="btn" id="quick-open" title="貼文字或截圖，批次加入事項">⚡ 快速加入</button>
       <span class="spacer"></span>
       <button class="btn" id="cal-close">關閉</button>
     </div>
     <div class="cal-grid" id="cal-grid"></div>
     <p class="dnote">點任一天即可編輯當天的事項；有事項的日子會標示出來。行事曆會跟著同步，手機和電腦共用同一份。</p>
+  </div>
+</div>
+
+<div class="overlay" id="quick-overlay">
+  <div class="dialog">
+    <h2>⚡ 快速加入行事曆</h2>
+    <p style="font-size:14px; color:var(--text-2); margin-bottom:10px;">貼上文字（Ctrl+V）或選一張截圖，程式會列出偵測到的「日期＋事項」，你勾選、微調後一次加入。每行一件事，例如：<code>8/20 台南武廟 17:00</code></p>
+    <div class="drow">
+      <button class="btn" id="quick-pick-img">📷 選擇截圖辨識</button>
+      <input type="file" id="quick-file" accept="image/*" hidden>
+      <span id="quick-ocr-status"></span>
+    </div>
+    <textarea id="quick-input" placeholder="在這裡貼上文字，或用上面的按鈕選截圖…&#10;範例：&#10;8/20 台南武廟 17:00&#10;8月22日 十鼓 18-21&#10;2026/9/1 陳外科 下午"></textarea>
+    <div class="qc-head">偵測到的事項（勾選要加入的，可直接修改日期或內容）</div>
+    <div id="quick-preview"></div>
+    <div class="drow" style="margin-top:12px;">
+      <button class="btn primary" id="quick-add">加入勾選的事項</button>
+      <span class="spacer"></span>
+      <button class="btn" id="quick-close">關閉</button>
+    </div>
+    <p class="dnote">截圖辨識（OCR）在你的瀏覽器內完成，圖片不會外傳。中文辨識偶有小誤，請務必看過清單再加入。第一次辨識會下載中文模型（約十幾 MB，之後會快取）。</p>
   </div>
 </div>
 
@@ -1433,6 +1479,7 @@ $('img-file').addEventListener('change', e => {
 
 document.addEventListener('paste', e => {
   if (document.activeElement === $('token-input')) return;
+  if ($('quick-overlay').classList.contains('show')) return;  // 快速加入面板自己處理貼上
   const items = e.clipboardData && e.clipboardData.items;
   if (!items) return;
   const files = [];
@@ -1903,6 +1950,173 @@ $('day-save').onclick = saveDay;
 $('day-close').onclick = () => $('day-overlay').classList.remove('show');
 $('day-overlay').addEventListener('click', e => {
   if (e.target === $('day-overlay')) $('day-overlay').classList.remove('show');
+});
+
+// ===== 快速加入行事曆（貼文字 / 截圖 OCR）=====
+function resolveYear(mo, d) {
+  const now = new Date();
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let y = now.getFullYear();
+  if (new Date(y, mo - 1, d) < todayMid) y += 1;  // 已過的日期預設當作明年
+  return y;
+}
+function mkDate(y, mo, d, raw) {
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return { date: y + '-' + pad2(mo) + '-' + pad2(d), raw };
+}
+function matchDate(line) {
+  let m;
+  m = line.match(/(20\d{2})\s*[\/\-.年]\s*(\d{1,2})\s*[\/\-.月]\s*(\d{1,2})/);
+  if (m) return mkDate(+m[1], +m[2], +m[3], m[0]);
+  m = line.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
+  if (m) return mkDate(resolveYear(+m[1], +m[2]), +m[1], +m[2], m[0]);
+  m = line.match(/(?<!\d)(\d{1,2})\s*[\/\-]\s*(\d{1,2})(?!\d)/);
+  if (m) return mkDate(resolveYear(+m[1], +m[2]), +m[1], +m[2], m[0]);
+  return null;
+}
+function cleanEventText(line, raw) {
+  let t = line.replace(raw, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/^[\s:：,，.、\-]+/, '').trim();
+  return t || line.trim();
+}
+function tidyCJK(text) {
+  // OCR 常在中文字之間插入空白，把「台 南 武 廟」收回「台南武廟」
+  let prev;
+  do { prev = text; text = text.replace(/([一-鿿　-〿＀-￯])[ \t]+(?=[一-鿿　-〿＀-￯])/g, '$1'); }
+  while (text !== prev);
+  return text;
+}
+function parseCandidates(text) {
+  return text.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    const m = matchDate(line);
+    if (m) return { date: m.date, text: cleanEventText(line, m.raw) };
+    return { date: '', text: line };
+  });
+}
+
+let quickCandidates = [];
+function renderQuickPreview() {
+  const box = $('quick-preview');
+  box.innerHTML = '';
+  if (!quickCandidates.length) {
+    box.innerHTML = '<div id="quick-empty">貼上文字或截圖後，這裡會列出偵測到的日期與事項。</div>';
+    return;
+  }
+  quickCandidates.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'qc-row' + (c.date ? '' : ' nodate');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !!c.date;
+    const dt = document.createElement('input');
+    dt.type = 'date'; dt.value = c.date || '';
+    dt.title = c.date ? '' : '沒偵測到日期，請補上才會加入';
+    const tx = document.createElement('input');
+    tx.type = 'text'; tx.value = c.text;
+    dt.addEventListener('change', () => {
+      row.classList.toggle('nodate', !dt.value);
+      if (dt.value) cb.checked = true;
+    });
+    row.append(cb, dt, tx);
+    box.appendChild(row);
+  });
+}
+function parseQuickInput() {
+  quickCandidates = parseCandidates($('quick-input').value);
+  renderQuickPreview();
+}
+
+let quickTimer = null;
+$('quick-open').onclick = () => {
+  $('quick-input').value = '';
+  quickCandidates = [];
+  renderQuickPreview();
+  $('quick-ocr-status').textContent = '';
+  $('quick-overlay').classList.add('show');
+};
+$('quick-close').onclick = () => $('quick-overlay').classList.remove('show');
+$('quick-overlay').addEventListener('click', e => {
+  if (e.target === $('quick-overlay')) $('quick-overlay').classList.remove('show');
+});
+$('quick-input').addEventListener('input', () => {
+  clearTimeout(quickTimer);
+  quickTimer = setTimeout(parseQuickInput, 350);
+});
+
+$('quick-add').onclick = () => {
+  const rows = [...$('quick-preview').querySelectorAll('.qc-row')];
+  const now = Date.now();
+  let added = 0, firstDate = null;
+  rows.forEach((row, i) => {
+    const cb = row.querySelector('input[type=checkbox]');
+    const dt = row.querySelector('input[type=date]');
+    const tx = row.querySelector('input[type=text]');
+    if (!cb.checked) return;
+    const date = dt.value, text = tx.value.trim();
+    if (!date || !text) return;
+    events.push({ id: newId(), date, text, created: now + i, updated: now + i });
+    added++;
+    if (!firstDate || date < firstDate) firstDate = date;
+  });
+  if (!added) { toast('沒有勾選任何有日期又有內容的事項'); return; }
+  persist();
+  scheduleSync();
+  if (firstDate) { const p = firstDate.split('-'); calYear = +p[0]; calMonth = +p[1] - 1; }
+  renderCalendar();
+  $('quick-overlay').classList.remove('show');
+  $('cal-overlay').classList.add('show');
+  toast('已加入 ' + added + ' 筆事項到行事曆');
+};
+
+// OCR：延遲載入 Tesseract.js，只在第一次辨識時抓
+let tesseractLoading = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+  if (tesseractLoading) return tesseractLoading;
+  tesseractLoading = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload = res;
+    s.onerror = () => { tesseractLoading = null; rej(new Error('load failed')); };
+    document.head.appendChild(s);
+  });
+  return tesseractLoading;
+}
+async function runOCR(file) {
+  const status = $('quick-ocr-status');
+  try {
+    status.textContent = '載入辨識模型中…（第一次較久）';
+    await loadTesseract();
+    status.textContent = '辨識中… 0%';
+    const { data } = await Tesseract.recognize(file, 'chi_tra+eng', {
+      logger: m => {
+        if (m.status === 'recognizing text') status.textContent = '辨識中… ' + Math.round(m.progress * 100) + '%';
+      }
+    });
+    const text = tidyCJK((data.text || '').replace(/[ \t]+\n/g, '\n').replace(/\n{2,}/g, '\n')).trim();
+    const cur = $('quick-input').value.trim();
+    $('quick-input').value = cur ? cur + '\n' + text : text;
+    parseQuickInput();
+    status.textContent = text ? '辨識完成，請確認下方清單' : '沒有辨識到文字，換一張清楚一點的截圖試試';
+  } catch (e) {
+    status.textContent = '⚠️ 辨識失敗（可能是網路問題），可以改用「貼文字」';
+  }
+}
+$('quick-pick-img').onclick = () => $('quick-file').click();
+$('quick-file').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) runOCR(f);
+  e.target.value = '';
+});
+$('quick-overlay').addEventListener('paste', e => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const it of items) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      e.preventDefault();
+      runOCR(it.getAsFile());
+      return;
+    }
+  }
 });
 
 let toastTimer = null;
