@@ -141,6 +141,23 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 #note-title:focus { outline: none; border-color: var(--accent-border); }
 #note-title::placeholder { font-weight: 400; color: var(--text-3); }
 
+#fmt-bar {
+  display: flex; align-items: center; gap: 3px; flex-wrap: wrap;
+  padding: 6px 8px; margin-bottom: 6px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+}
+#fmt-bar button {
+  min-width: 30px; height: 30px; padding: 0 7px;
+  border: none; background: none; color: var(--text);
+  border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1;
+}
+#fmt-bar button:hover { background: var(--panel-2); }
+#fmt-bar .fb-b { font-weight: 700; }
+#fmt-bar .fb-i { font-style: italic; }
+#fmt-bar .fb-u { text-decoration: underline; }
+#fmt-bar .fb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.fb-color { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border); padding: 0; cursor: pointer; }
+
 #editor {
   width: 100%;
   min-height: 42vh;
@@ -151,10 +168,17 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   color: var(--text);
   font-size: 15px;
   line-height: 1.8;
-  resize: vertical;
+  overflow-y: auto;
   font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 #editor:focus { outline: none; border-color: var(--accent-border); }
+#editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-3);
+  pointer-events: none;
+}
 
 #img-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 #img-strip { display: contents; }
@@ -442,7 +466,24 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 
     <main id="main">
       <input id="note-title" type="text" placeholder="標題（留空會自動以第一行當標題）" autocomplete="off">
-      <textarea id="editor" placeholder="在這裡輸入備忘內容，字數不限，打字會自動儲存。&#10;&#10;需要翻譯時按下方的「翻譯全文」，超過 5000 字會自動分段處理。"></textarea>
+      <div id="fmt-bar">
+        <button class="fb-b" data-cmd="bold" title="粗體">B</button>
+        <button class="fb-i" data-cmd="italic" title="斜體">I</button>
+        <button class="fb-u" data-cmd="underline" title="底線">U</button>
+        <span class="fb-sep"></span>
+        <button data-size="2" title="小字">A⁻</button>
+        <button data-size="4" title="一般">A</button>
+        <button data-size="6" title="大字">A⁺</button>
+        <span class="fb-sep"></span>
+        <button class="fb-color" data-color="#e24b4a" style="background:#e24b4a" title="紅"></button>
+        <button class="fb-color" data-color="#d97706" style="background:#d97706" title="橘"></button>
+        <button class="fb-color" data-color="#16a34a" style="background:#16a34a" title="綠"></button>
+        <button class="fb-color" data-color="#2563eb" style="background:#2563eb" title="藍"></button>
+        <button class="fb-color" data-color="#7c3aed" style="background:#7c3aed" title="紫"></button>
+        <span class="fb-sep"></span>
+        <button data-cmd="removeFormat" title="清除格式">✕</button>
+      </div>
+      <div id="editor" contenteditable="true" data-placeholder="在這裡輸入備忘內容，字數不限，打字會自動儲存。需要翻譯時按下方的「翻譯全文」，超過 5000 字會自動分段處理。"></div>
 
       <div id="img-bar">
         <div id="img-strip"></div>
@@ -768,15 +809,25 @@ function fmtDate(ts) {
   return (d.getMonth() + 1) + '/' + d.getDate();
 }
 
+function edText() { return editor.innerText.replace(/ /g, ' '); }
+function edHtml() {
+  const h = editor.innerHTML;
+  return (h === '<br>' || h === '<div><br></div>') ? '' : h;
+}
+function edLoad(n) {
+  if (n && n.html) editor.innerHTML = n.html;
+  else editor.innerText = (n && n.text) || '';
+}
+
 function createNote() {
   flushSave();
-  const n = { id: newId(), title: '', text: '', images: [], order: topOrder(), created: Date.now(), updated: Date.now() };
+  const n = { id: newId(), title: '', text: '', html: '', images: [], order: topOrder(), created: Date.now(), updated: Date.now() };
   notes.unshift(n);
   activeId = n.id;
   persist();
   renderList();
   $('note-title').value = '';
-  editor.value = '';
+  edLoad(null);
   updateStatus();
   clearResults();
   renderImages();
@@ -790,7 +841,7 @@ function openNote(id) {
   activeId = id;
   localStorage.setItem(LS_ACTIVE, id);
   $('note-title').value = n.title || '';
-  editor.value = n.text;
+  edLoad(n);
   renderList();
   updateStatus();
   clearResults();
@@ -851,11 +902,12 @@ function renderList(filter) {
 }
 
 function updateStatus() {
-  const len = editor.value.length;
+  const txt = edText();
+  const len = txt.length;
   $('char-count').textContent = '字數 ' + len.toLocaleString();
   const info = $('chunk-info');
   if (len === 0) { info.textContent = ''; info.className = ''; return; }
-  const chunks = splitChunks(editor.value);
+  const chunks = splitChunks(txt);
   if (chunks.length > 1) {
     info.textContent = '超過 ' + CHUNK_LIMIT.toLocaleString() + ' 字，將自動分成 ' + chunks.length + ' 段翻譯';
     info.className = 'chip warn';
@@ -888,9 +940,9 @@ function snapshot(n, force) {
   if (!n || isEmptyNote(n)) return;
   const list = versions[n.id] || (versions[n.id] = []);
   const last = list[list.length - 1];
-  if (last && last.text === n.text && last.title === (n.title || '')) return;
+  if (last && last.text === n.text && last.title === (n.title || '') && last.html === (n.html || '')) return;
   if (!force && last && Date.now() - last.ts < VER_INTERVAL) return;
-  list.push({ ts: Date.now(), title: n.title || '', text: n.text });
+  list.push({ ts: Date.now(), title: n.title || '', text: n.text, html: n.html || '' });
   while (list.length > MAX_VERSIONS) list.shift();
   saveVersions();
 }
@@ -901,7 +953,8 @@ function commitActive() {
   if (!n) return;
   snapshot(n);
   n.title = $('note-title').value.trim();
-  n.text = editor.value;
+  n.text = edText();
+  n.html = edHtml();
   n.updated = Date.now();
   persist();
   renderList($('search').value);
@@ -921,8 +974,31 @@ function flushSave() {
   if (saveTimer) { clearTimeout(saveTimer); commitActive(); }
 }
 
-editor.addEventListener('input', () => { queueSave(); updateStatus(); });
+editor.addEventListener('input', () => {
+  if (editor.innerHTML === '<br>') editor.innerHTML = '';
+  queueSave();
+  updateStatus();
+});
 $('note-title').addEventListener('input', queueSave);
+
+// 格式工具列：用 mousedown+preventDefault 保留編輯區選取範圍
+try { document.execCommand('styleWithCSS', false, true); } catch {}
+$('fmt-bar').addEventListener('mousedown', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  e.preventDefault();
+  editor.focus();
+  try { document.execCommand('styleWithCSS', false, true); } catch {}
+  if (btn.dataset.cmd) {
+    document.execCommand(btn.dataset.cmd, false, null);
+  } else if (btn.dataset.size) {
+    document.execCommand('fontSize', false, btn.dataset.size);
+  } else if (btn.dataset.color) {
+    document.execCommand('foreColor', false, btn.dataset.color);
+  }
+  queueSave();
+  updateStatus();
+});
 
 $('note-title').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); editor.focus(); }
@@ -1075,7 +1151,7 @@ $('import-file').addEventListener('change', e => {
       for (const n of arr) {
         if (!n || typeof n.text !== 'string') continue;
         if (notes.find(x => x.id === n.id)) continue;
-        const rec = { id: n.id || newId(), title: n.title || '', text: n.text, images: Array.isArray(n.images) ? n.images : [], order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() };
+        const rec = { id: n.id || newId(), title: n.title || '', text: n.text, html: n.html || '', images: Array.isArray(n.images) ? n.images : [], order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() };
         if (n.trashed) rec.trashed = n.trashed;
         notes.push(rec);
         added++;
@@ -1170,10 +1246,11 @@ function copyText(text, msg) {
 }
 
 $('translate').onclick = async () => {
-  const text = editor.value.trim();
+  const full = edText();
+  const text = full.trim();
   if (!text) { toast('先輸入要翻譯的內容'); return; }
   const sl = $('sl').value, tl = $('tl').value;
-  const chunks = splitChunks(editor.value);
+  const chunks = splitChunks(full);
   clearResults();
   const run = ++translateSeq;
   showClear('✕ 取消翻譯');
@@ -1229,11 +1306,12 @@ $('translate').onclick = async () => {
 };
 
 $('gen-links').onclick = () => {
-  const text = editor.value.trim();
-  if (!text) { toast('先輸入內容'); return; }
+  const full = edText();
+  if (!full.trim()) { toast('先輸入內容'); return; }
+  const chunks = splitChunks(full);
   clearResults();
-  showFallback(splitChunks(editor.value), $('sl').value, $('tl').value,
-    '已將內容切成 ' + splitChunks(editor.value).length + ' 段（每段不超過 5000 字），點按鈕會開啟 Google 翻譯網頁版：');
+  showFallback(chunks, $('sl').value, $('tl').value,
+    '已將內容切成 ' + chunks.length + ' 段（每段不超過 5000 字），點按鈕會開啟 Google 翻譯網頁版：');
   showClear('✕ 清除結果');
 };
 
@@ -1618,7 +1696,7 @@ function renderVersions() {
     t.textContent = fmtTime(v.ts) + (v.title ? '・' + v.title : '');
     const s = document.createElement('div');
     s.className = 'rec-s';
-    const diff = v.text.length - editor.value.length;
+    const diff = v.text.length - edText().length;
     s.textContent = v.text.length.toLocaleString() + ' 字' +
       (diff === 0 ? '（和目前一樣）' : diff > 0 ? '（比目前多 ' + diff.toLocaleString() + ' 字）'
                                                : '（比目前少 ' + (-diff).toLocaleString() + ' 字）');
@@ -1635,13 +1713,15 @@ function renderVersions() {
       const cur = activeNote();
       if (!cur) return;
       cur.title = $('note-title').value.trim();
-      cur.text = editor.value;
+      cur.text = edText();
+      cur.html = edHtml();
       snapshot(cur, true);
       cur.title = v.title;
       cur.text = v.text;
+      cur.html = v.html || '';
       cur.updated = Date.now();
       $('note-title').value = v.title;
-      editor.value = v.text;
+      edLoad(cur);
       persist();
       updateStatus();
       renderList($('search').value);
@@ -1974,20 +2054,21 @@ function applyRemoteToUI() {
   const titleInput = $('note-title');
   let n = live.find(x => x.id === activeId);
   const idle = document.activeElement !== editor && document.activeElement !== titleInput;
-  if (n && isEmptyNote(n) && !editor.value.trim() && !titleInput.value.trim()) {
+  if (n && isEmptyNote(n) && !edText().trim() && !titleInput.value.trim()) {
     const better = live.find(x => !isEmptyNote(x));
     if (better) n = better;
   }
   if (!n) n = live[0];
+  const contentDiffers = edText() !== n.text || (n.html !== undefined && edHtml() !== n.html);
   if (n.id !== activeId) {
     activeId = n.id;
     titleInput.value = n.title || '';
-    editor.value = n.text;
+    edLoad(n);
     updateStatus();
     clearResults();
-  } else if (idle && (editor.value !== n.text || titleInput.value !== (n.title || ''))) {
+  } else if (idle && (contentDiffers || titleInput.value !== (n.title || ''))) {
     titleInput.value = n.title || '';
-    editor.value = n.text;
+    edLoad(n);
     updateStatus();
   }
   renderList($('search').value);
