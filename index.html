@@ -343,6 +343,54 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 #ver-btn, #trash-btn { border: none; background: none; color: var(--text-3);
   font-size: 12px; cursor: pointer; padding: 2px 6px; border-radius: 5px; }
 #ver-btn:hover, #trash-btn:hover { background: var(--panel-2); color: var(--text); }
+
+#cal-overlay .dialog { max-width: 1000px; }
+.cal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.cal-title { font-size: 18px; font-weight: 600; min-width: 130px; }
+.cal-nav { border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 16px; }
+.cal-nav:hover { background: var(--panel-2); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-wd { text-align: center; font-size: 12px; font-weight: 500; color: var(--text-3); padding: 4px 0; }
+.cal-wd.sun { color: var(--danger); }
+.cal-wd.sat { color: var(--accent); }
+.cal-cell {
+  min-height: 92px; border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px 5px; cursor: pointer; overflow: hidden;
+  display: flex; flex-direction: column; gap: 2px; background: var(--panel);
+}
+.cal-cell:hover { border-color: var(--accent-border); background: var(--panel-2); }
+.cal-cell.other { opacity: 0.4; }
+.cal-cell.today { border-color: var(--accent); border-width: 2px; }
+.cal-daynum { font-size: 13px; font-weight: 500; }
+.cal-cell.today .cal-daynum { color: var(--accent); }
+.cal-cell.sun .cal-daynum { color: var(--danger); }
+.cal-cell.sat .cal-daynum { color: var(--accent); }
+.cal-ev {
+  font-size: 11px; line-height: 1.35; color: var(--text-2);
+  background: var(--accent-bg); border-radius: 4px; padding: 1px 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cal-more { font-size: 11px; color: var(--text-3); padding: 0 4px; }
+
+#day-overlay .dialog { max-width: 460px; }
+.day-ev-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.day-ev-row input {
+  flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel); color: var(--text); font-size: 14px; font-family: inherit;
+}
+.day-ev-row input:focus { outline: none; border-color: var(--accent-border); }
+.day-ev-row button { border: none; background: none; color: var(--danger); cursor: pointer;
+  font-size: 13px; padding: 6px 8px; border-radius: 6px; flex-shrink: 0; }
+.day-ev-row button:hover { background: var(--panel-2); }
+#day-empty { font-size: 13px; color: var(--text-3); padding: 8px 2px 12px; }
+
+@media (max-width: 640px) {
+  .cal-grid { gap: 2px; }
+  .cal-cell { min-height: 62px; padding: 3px; }
+  .cal-ev { font-size: 10px; padding: 1px 3px; }
+  .cal-daynum { font-size: 12px; }
+}
 .dhr { border: none; border-top: 1px solid var(--border); margin: 16px 0 12px; }
 .dsub { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
 
@@ -383,6 +431,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
     <button class="btn" id="import-json" title="從 json 備份還原">還原</button>
     <button class="btn danger" id="del-note">刪除</button>
     <button class="btn" id="trash-open" title="復原刪掉的筆記">🗑 垃圾桶</button>
+    <button class="btn" id="cal-btn" title="月曆行事曆">📅 行事曆</button>
     <button class="btn" id="rem-btn" title="例行公事提醒">⏰ 提醒</button>
     <button class="btn" id="sync-btn" title="跨裝置自動同步"><span class="dot"></span>同步</button>
     <input type="file" id="import-file" accept=".json" hidden>
@@ -473,6 +522,34 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   </div>
 </div>
 
+<div class="overlay" id="cal-overlay">
+  <div class="dialog">
+    <div class="cal-head">
+      <button class="cal-nav" id="cal-prev" title="上個月">‹</button>
+      <span class="cal-title" id="cal-title">2026 年 8 月</span>
+      <button class="cal-nav" id="cal-next" title="下個月">›</button>
+      <button class="btn" id="cal-today">今天</button>
+      <span class="spacer"></span>
+      <button class="btn" id="cal-close">關閉</button>
+    </div>
+    <div class="cal-grid" id="cal-grid"></div>
+    <p class="dnote">點任一天即可編輯當天的事項；有事項的日子會標示出來。行事曆會跟著同步，手機和電腦共用同一份。</p>
+  </div>
+</div>
+
+<div class="overlay" id="day-overlay">
+  <div class="dialog">
+    <h2 id="day-title">8 月 4 日</h2>
+    <div id="day-list"></div>
+    <div class="drow">
+      <button class="btn" id="day-add">＋ 新增事項</button>
+      <span class="spacer"></span>
+      <button class="btn primary" id="day-save">儲存</button>
+      <button class="btn" id="day-close">關閉</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="rem-overlay">
   <div class="dialog">
     <h2>⏰ 例行提醒</h2>
@@ -555,6 +632,9 @@ const LS_DELETED = 'tmemo_deleted_v1';
 const LS_REMS = 'tmemo_reminders_v1';
 const LS_REMS_DEL = 'tmemo_reminders_deleted_v1';
 const LS_VERSIONS = 'tmemo_versions_v1';
+const LS_EVENTS = 'tmemo_events_v1';
+const LS_EVENTS_DEL = 'tmemo_events_deleted_v1';
+const CAL_FILE = 'calendar.json';
 const TRASH_DAYS = 30;
 const MAX_VERSIONS = 10;
 const VER_INTERVAL = 45000;
@@ -575,6 +655,10 @@ let remDeleted = {};
 try { remDeleted = JSON.parse(localStorage.getItem(LS_REMS_DEL)) || {}; } catch { remDeleted = {}; }
 let versions = {};
 try { versions = JSON.parse(localStorage.getItem(LS_VERSIONS)) || {}; } catch { versions = {}; }
+let events = [];
+try { events = JSON.parse(localStorage.getItem(LS_EVENTS)) || []; } catch { events = []; }
+let eventsDeleted = {};
+try { eventsDeleted = JSON.parse(localStorage.getItem(LS_EVENTS_DEL)) || {}; } catch { eventsDeleted = {}; }
 
 function load() {
   try { notes = JSON.parse(localStorage.getItem(LS_NOTES)) || []; }
@@ -599,6 +683,8 @@ function persist() {
     localStorage.setItem(LS_DELETED, JSON.stringify(deleted));
     localStorage.setItem(LS_REMS, JSON.stringify(reminders));
     localStorage.setItem(LS_REMS_DEL, JSON.stringify(remDeleted));
+    localStorage.setItem(LS_EVENTS, JSON.stringify(events));
+    localStorage.setItem(LS_EVENTS_DEL, JSON.stringify(eventsDeleted));
   } catch (e) {
     toast('⚠️ 本機儲存空間已滿，請刪除一些圖片或筆記');
     throw e;
@@ -1578,6 +1664,167 @@ $('ver-overlay').addEventListener('click', e => {
   if (e.target === $('ver-overlay')) $('ver-overlay').classList.remove('show');
 });
 
+let calYear, calMonth, dayEditDate = null;
+const WD_NAMES = ['日', '一', '二', '三', '四', '五', '六'];
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function dateKey(y, m, d) { return y + '-' + pad2(m + 1) + '-' + pad2(d); }
+
+function eventsForDate(key) {
+  return events.filter(e => e.date === key && !eventsDeleted[e.id])
+    .sort((a, b) => (a.created || 0) - (b.created || 0));
+}
+
+function datesWithEvents() {
+  const s = new Set();
+  for (const e of events) if (!eventsDeleted[e.id]) s.add(e.date);
+  return s;
+}
+
+function renderCalendar() {
+  $('cal-title').textContent = calYear + ' 年 ' + (calMonth + 1) + ' 月';
+  const grid = $('cal-grid');
+  grid.innerHTML = '';
+  WD_NAMES.forEach((w, i) => {
+    const h = document.createElement('div');
+    h.className = 'cal-wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '');
+    h.textContent = w;
+    grid.appendChild(h);
+  });
+  const first = new Date(calYear, calMonth, 1);
+  const startWd = first.getDay();
+  const start = new Date(calYear, calMonth, 1 - startWd);
+  const todayKey = dateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const key = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+    const wd = d.getDay();
+    const cell = document.createElement('div');
+    cell.className = 'cal-cell' +
+      (d.getMonth() !== calMonth ? ' other' : '') +
+      (key === todayKey ? ' today' : '') +
+      (wd === 0 ? ' sun' : wd === 6 ? ' sat' : '');
+    const num = document.createElement('div');
+    num.className = 'cal-daynum';
+    num.textContent = d.getDate();
+    cell.appendChild(num);
+    const evs = eventsForDate(key);
+    evs.slice(0, 3).forEach(e => {
+      const el = document.createElement('div');
+      el.className = 'cal-ev';
+      el.textContent = e.text;
+      cell.appendChild(el);
+    });
+    if (evs.length > 3) {
+      const more = document.createElement('div');
+      more.className = 'cal-more';
+      more.textContent = '還有 ' + (evs.length - 3) + ' 項…';
+      cell.appendChild(more);
+    }
+    cell.onclick = () => openDay(key);
+    grid.appendChild(cell);
+  }
+}
+
+function openCalendar() {
+  const now = new Date();
+  if (calYear === undefined) { calYear = now.getFullYear(); calMonth = now.getMonth(); }
+  renderCalendar();
+  $('cal-overlay').classList.add('show');
+}
+
+function shiftMonth(delta) {
+  calMonth += delta;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  else if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderCalendar();
+}
+
+$('cal-btn').onclick = openCalendar;
+$('cal-prev').onclick = () => shiftMonth(-1);
+$('cal-next').onclick = () => shiftMonth(1);
+$('cal-today').onclick = () => {
+  const now = new Date();
+  calYear = now.getFullYear(); calMonth = now.getMonth();
+  renderCalendar();
+};
+$('cal-close').onclick = () => $('cal-overlay').classList.remove('show');
+$('cal-overlay').addEventListener('click', e => {
+  if (e.target === $('cal-overlay')) $('cal-overlay').classList.remove('show');
+});
+
+function addDayRow(text, eid) {
+  const row = document.createElement('div');
+  row.className = 'day-ev-row';
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = text || '';
+  inp.placeholder = '事項內容';
+  inp.dataset.eid = eid || 'new';
+  const del = document.createElement('button');
+  del.textContent = '刪除';
+  del.onclick = () => row.remove();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); saveDay(); }
+  });
+  row.appendChild(inp); row.appendChild(del);
+  $('day-list').appendChild(row);
+  return inp;
+}
+
+function renderDayRows() {
+  const box = $('day-list');
+  box.innerHTML = '';
+  const evs = eventsForDate(dayEditDate);
+  if (!evs.length) { addDayRow('', 'new'); return; }
+  evs.forEach(e => addDayRow(e.text, e.id));
+}
+
+function openDay(key) {
+  dayEditDate = key;
+  const [y, m, d] = key.split('-').map(Number);
+  const wd = new Date(y, m - 1, d).getDay();
+  $('day-title').textContent = m + ' 月 ' + d + ' 日（週' + WD_NAMES[wd] + '）';
+  renderDayRows();
+  $('day-overlay').classList.add('show');
+  setTimeout(() => { const f = $('day-list').querySelector('input'); if (f) f.focus(); }, 0);
+}
+
+function saveDay() {
+  const key = dayEditDate;
+  const before = eventsForDate(key);
+  const rows = [...$('day-list').querySelectorAll('.day-ev-row input')];
+  const now = Date.now();
+  const seen = new Set();
+  for (const inp of rows) {
+    const eid = inp.dataset.eid;
+    const text = inp.value.trim();
+    if (eid === 'new') {
+      if (text) events.push({ id: newId(), date: key, text, created: now, updated: now });
+    } else {
+      seen.add(eid);
+      const ev = events.find(x => x.id === eid);
+      if (!ev) continue;
+      if (!text) eventsDeleted[eid] = now;
+      else if (ev.text !== text) { ev.text = text; ev.updated = now; }
+    }
+  }
+  for (const ev of before) if (!seen.has(ev.id)) eventsDeleted[ev.id] = now;
+  events = events.filter(e => !eventsDeleted[e.id]);
+  persist();
+  renderCalendar();
+  $('day-overlay').classList.remove('show');
+  scheduleSync();
+  toast('已儲存 ' + key + ' 的事項');
+}
+
+$('day-add').onclick = () => { const i = addDayRow('', 'new'); i.focus(); };
+$('day-save').onclick = saveDay;
+$('day-close').onclick = () => $('day-overlay').classList.remove('show');
+$('day-overlay').addEventListener('click', e => {
+  if (e.target === $('day-overlay')) $('day-overlay').classList.remove('show');
+});
+
 let toastTimer = null;
 function toast(msg) {
   const t = $('toast');
@@ -1644,12 +1891,16 @@ async function pullRemote(id) {
   const g = await (await gh('/gists/' + id)).json();
   const d = await readGistFile(g, SYNC_FILE);
   const rd = await readGistFile(g, REM_FILE);
+  const cd = await readGistFile(g, CAL_FILE);
   return {
     notes: d && Array.isArray(d.notes) ? d.notes : [],
     deleted: (d && d.deleted) || {},
     reminders: rd && Array.isArray(rd.reminders) ? rd.reminders : [],
     remDeleted: (rd && rd.deleted) || {},
-    hadRemFile: !!rd
+    hadRemFile: !!rd,
+    events: cd && Array.isArray(cd.events) ? cd.events : [],
+    eventsDeleted: (cd && cd.deleted) || {},
+    hadCalFile: !!cd
   };
 }
 
@@ -1673,6 +1924,25 @@ function mergeReminders(remote) {
   const changedRemote = JSON.stringify(merged) !== JSON.stringify(remote.reminders) ||
     JSON.stringify(del) !== JSON.stringify(remote.remDeleted) || !remote.hadRemFile;
   remDeleted = del;
+  return { merged, changedRemote };
+}
+
+function mergeEvents(remote) {
+  const del = { ...remote.eventsDeleted };
+  for (const [id, ts] of Object.entries(eventsDeleted)) {
+    if (!del[id] || del[id] < ts) del[id] = ts;
+  }
+  const map = new Map();
+  for (const e of remote.events) map.set(e.id, e);
+  for (const e of events) {
+    const o = map.get(e.id);
+    if (!o || (e.updated || 0) > (o.updated || 0)) map.set(e.id, e);
+  }
+  const merged = [...map.values()].filter(e => !(del[e.id] && del[e.id] >= (e.updated || 0)));
+  merged.sort((a, b) => (a.created || 0) - (b.created || 0));
+  const changedRemote = JSON.stringify(merged) !== JSON.stringify(remote.events) ||
+    JSON.stringify(del) !== JSON.stringify(remote.eventsDeleted) || !remote.hadCalFile;
+  eventsDeleted = del;
   return { merged, changedRemote };
 }
 
@@ -1741,6 +2011,11 @@ async function syncNow(passive) {
     const remChanged = JSON.stringify(rem.merged) !== JSON.stringify(reminders);
     reminders = rem.merged;
     if (remChanged && $('rem-overlay').classList.contains('show') && !editingRemId) renderReminders();
+    const cal = mergeEvents(remote);
+    const calChanged = JSON.stringify(cal.merged) !== JSON.stringify(events);
+    events = cal.merged;
+    if (calChanged && $('cal-overlay').classList.contains('show') &&
+        !$('day-overlay').classList.contains('show')) renderCalendar();
     persist();
     const files = {};
     if (changedRemote) {
@@ -1748,6 +2023,9 @@ async function syncNow(passive) {
     }
     if (rem.changedRemote) {
       files[REM_FILE] = { content: JSON.stringify({ reminders, deleted: remDeleted, updated: Date.now() }, null, 2) };
+    }
+    if (cal.changedRemote) {
+      files[CAL_FILE] = { content: JSON.stringify({ events, deleted: eventsDeleted, updated: Date.now() }, null, 2) };
     }
     if (Object.keys(files).length) {
       await gh('/gists/' + id, { method: 'PATCH', body: JSON.stringify({ files }) });
