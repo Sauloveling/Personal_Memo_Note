@@ -45,7 +45,22 @@
 4. 瀏覽器開啟 `https://api.telegram.org/bot<你的TOKEN>/getUpdates`，找到 `"chat":{"id":123456789`
 5. 加入 secret `TELEGRAM_CHAT_ID`，值就是那串數字
 
-### 三、Email 通知
+### 三、LINE 通知（約 5 分鐘）
+
+> 註：舊的「LINE Notify」已於 2025 年 3 月停止服務，改用官方 Messaging API。
+
+1. 到 <https://developers.line.biz/console/> 用 LINE 帳號登入
+2. 建立一個 **Provider**（隨便命名，例如自己的名字）
+3. 在該 Provider 下建立一個 **Messaging API channel**（頻道名稱、圖示隨意填）
+4. 進入頻道的 **Messaging API** 分頁：
+   - 最下方 **Channel access token (long-lived)** 按 **Issue** 產生 token → 加入 secret `LINE_CHANNEL_TOKEN`
+   - 頁面上會有一個 QR code，用手機 LINE 掃描 **把這個官方帳號加為好友**（不加好友會推播失敗）
+5. 取得你自己的 **userId**（U 開頭）：進入頻道 **Basic settings** 分頁，最下方「Your user ID」就是 → 加入 secret `LINE_USER_ID`
+6. （建議）在 Messaging API 分頁把 **Auto-reply messages / Greeting messages** 關掉，免得每次互動它自動回你罐頭訊息
+
+沒設定這兩個 secret 就會自動跳過 LINE，不影響其他管道。
+
+### 四、Email 通知
 
 支援任何 SMTP 伺服器，secret 名稱與常見 `.env` 慣例一致：
 
@@ -59,11 +74,11 @@
 | `ALERT_EMAIL_FROM` | 選填，寄件者。沒設就用 `SMTP_USERNAME` |
 | `ALERT_EMAIL_TO` | 收件者。沒設就用 `SMTP_USERNAME` |
 
-### 四、測試
+### 五、測試
 
-到 repo 的 **Actions → 例行提醒 → Run workflow** 手動執行一次，看 log 是否顯示 `telegram: sent` / `email: sent`。
+到 repo 的 **Actions → 例行提醒 → Run workflow** 手動執行一次，看 log 是否顯示 `telegram: sent` / `line: sent` / `email: sent`。
 
-兩個管道都是選填的 — 只設定 Telegram 也能運作，Email 那組 secrets 沒設就會自動跳過（反之亦然）。
+三個管道（Telegram / LINE / Email）都是選填、彼此獨立 — 只設定其中一個也能運作，沒設定的那組 secrets 會自動跳過。
 
 ## 注意事項
 

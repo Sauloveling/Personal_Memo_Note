@@ -5,6 +5,8 @@
   GIST_TOKEN          必要，與備忘簿同步用的同一組金鑰
   TELEGRAM_BOT_TOKEN  選填，沒設就跳過 Telegram
   TELEGRAM_CHAT_ID    選填，同上
+  LINE_CHANNEL_TOKEN  選填，沒設就跳過 LINE。LINE Messaging API 的 channel access token
+  LINE_USER_ID        選填，要推播給你的 userId（U 開頭）
   SMTP_HOST           選填，沒設就跳過 Email。例：smtp.gmail.com
   SMTP_PORT           選填，預設 465（SSL）或 587（STARTTLS）
   SMTP_USERNAME       選填，SMTP 登入帳號
@@ -34,6 +36,8 @@ TAIPEI = timezone(timedelta(hours=8))
 GIST_TOKEN = os.environ.get('GIST_TOKEN', '')
 TG_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TG_CHAT = os.environ.get('TELEGRAM_CHAT_ID', '')
+LINE_TOKEN = os.environ.get('LINE_CHANNEL_TOKEN', '')
+LINE_USER = os.environ.get('LINE_USER_ID', '')
 SMTP_HOST = os.environ.get('SMTP_HOST', '')
 SMTP_PORT = int(os.environ.get('SMTP_PORT') or 465)
 SMTP_USER = os.environ.get('SMTP_USERNAME', '')
@@ -124,6 +128,29 @@ def send_telegram(lines):
     return False
 
 
+def send_line(lines):
+    if not (LINE_TOKEN and LINE_USER):
+        print('line: skipped (secrets not set)')
+        return False
+    text = '⏰ 今天的例行提醒\n\n' + '\n'.join('• ' + l for l in lines)
+    # LINE 單則文字上限 5000 字，超過就截斷保險
+    if len(text) > 4900:
+        text = text[:4900] + '…'
+    body = json.dumps({'to': LINE_USER, 'messages': [{'type': 'text', 'text': text}]}).encode('utf-8')
+    req = urllib.request.Request('https://api.line.me/v2/bot/message/push', data=body, method='POST')
+    req.add_header('Authorization', 'Bearer ' + LINE_TOKEN)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=30) as res:
+            print('line: sent (HTTP %d)' % res.status)
+            return True
+    except urllib.error.HTTPError as e:
+        print('line: FAILED', e.code, e.read().decode('utf-8', 'replace')[:200])
+    except Exception as e:
+        print('line: FAILED', type(e).__name__, e)
+    return False
+
+
 def send_email(lines):
     if not (SMTP_HOST and SMTP_USER and SMTP_PASS and MAIL_TO):
         print('email: skipped (secrets not set)')
@@ -178,8 +205,9 @@ def main():
     print('due:', ' | '.join(lines))
 
     sent_tg = send_telegram(lines)
+    sent_line = send_line(lines)
     sent_mail = send_email(lines)
-    if not (sent_tg or sent_mail):
+    if not (sent_tg or sent_line or sent_mail):
         print('no channel delivered — leaving lastSent untouched so it retries'); sys.exit(1)
 
     for r in due:
