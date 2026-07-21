@@ -198,6 +198,29 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   pointer-events: none;
 }
 
+#file-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+#file-list { display: contents; }
+.file-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px 6px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel); max-width: 100%;
+}
+.file-ico { font-size: 16px; flex-shrink: 0; }
+.file-meta { min-width: 0; }
+.file-name {
+  font-size: 13px; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.file-size { font-size: 11px; color: var(--text-3); }
+.file-chip button {
+  border: none; background: none; cursor: pointer;
+  font-size: 12px; padding: 4px 6px; border-radius: 6px; flex-shrink: 0;
+  color: var(--accent);
+}
+.file-chip button:hover { background: var(--panel-2); }
+.file-chip .file-del { color: var(--danger); }
+.file-chip.pending { opacity: 0.55; }
+
 #img-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 #img-strip { display: contents; }
 .img-thumb {
@@ -534,6 +557,12 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
         <input type="file" id="img-file" accept="image/*" multiple hidden>
       </div>
 
+      <div id="file-bar">
+        <div id="file-list"></div>
+        <button class="btn" id="add-file" title="附加 PDF、Word、TXT 等檔案">📎 附加檔案</button>
+        <input type="file" id="file-input" multiple hidden>
+      </div>
+
       <div class="statusbar">
         <span id="save-state">尚未儲存</span>
         <span id="char-count">字數 0</span>
@@ -741,6 +770,9 @@ const LS_VERSIONS = 'tmemo_versions_v1';
 const LS_EVENTS = 'tmemo_events_v1';
 const LS_EVENTS_DEL = 'tmemo_events_deleted_v1';
 const CAL_FILE = 'calendar.json';
+const ATT_FILE = 'attachments.json';
+const MAX_FILE_BYTES = 1024 * 1024;        // 單一附件上限 1MB
+const WARN_TOTAL_BYTES = 4 * 1024 * 1024;  // 附件總量超過就提醒
 const TRASH_DAYS = 30;
 const MAX_VERSIONS = 10;
 const VER_INTERVAL = 45000;
@@ -808,7 +840,8 @@ function noteTitle(n) {
 }
 
 function isEmptyNote(n) {
-  return !(n.text || '').trim() && !(n.title || '').trim() && !((n.images || []).length);
+  return !(n.text || '').trim() && !(n.title || '').trim() &&
+         !((n.images || []).length) && !((n.files || []).length);
 }
 
 function liveNotes() {
@@ -896,6 +929,7 @@ function createNote() {
   updateStatus();
   clearResults();
   renderImages();
+  renderFiles();
   $('note-title').focus();
 }
 
@@ -911,6 +945,7 @@ function openNote(id) {
   updateStatus();
   clearResults();
   renderImages();
+  renderFiles();
   $('sidebar').classList.remove('open');
 }
 
@@ -942,7 +977,8 @@ function renderList(filter) {
     const m = document.createElement('div');
     m.className = 'nm';
     m.textContent = fmtDate(n.updated) + '・' + n.text.length.toLocaleString() + ' 字' +
-      ((n.images || []).length ? '・📷' + n.images.length : '');
+      ((n.images || []).length ? '・📷' + n.images.length : '') +
+      ((n.files || []).length ? '・📎' + n.files.length : '');
     main.appendChild(t); main.appendChild(m);
     item.appendChild(main);
     if (!kw) {
@@ -1284,10 +1320,19 @@ $('export-txt').onclick = () => {
   download(noteTitle(n).replace(/[\\/:*?"<>|]/g, '_') + '.txt', n.text, 'text/plain;charset=utf-8');
 };
 
-$('export-json').onclick = () => {
+$('export-json').onclick = async () => {
   const stamp = new Date().toISOString().slice(0, 10);
-  download('翻譯備忘簿備份_' + stamp + '.json', JSON.stringify(notes, null, 2), 'application/json;charset=utf-8');
-  toast('已下載全部筆記備份');
+  // 附件內容存在 IndexedDB，備份時要一併帶上，否則還原後檔案會不見
+  const att = {};
+  try {
+    for (const id of allFileIds()) {
+      const data = await fileGet(id);
+      if (data) att[id] = data;
+    }
+  } catch {}
+  const payload = { format: 'tmemo-backup-v2', exported: Date.now(), notes, attachments: att };
+  download('翻譯備忘簿備份_' + stamp + '.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+  toast('已下載全部筆記備份' + (Object.keys(att).length ? '（含 ' + Object.keys(att).length + ' 個附件）' : ''));
 };
 
 $('import-json').onclick = () => $('import-file').click();
@@ -1295,23 +1340,31 @@ $('import-file').addEventListener('change', e => {
   const f = e.target.files[0];
   if (!f) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
-      const arr = JSON.parse(reader.result);
+      const raw = JSON.parse(reader.result);
+      // 舊版備份是純陣列，新版是含附件的物件，兩種都要能還原
+      const arr = Array.isArray(raw) ? raw : raw.notes;
+      const att = (!Array.isArray(raw) && raw.attachments) || {};
       if (!Array.isArray(arr)) throw new Error();
       let added = 0;
       for (const n of arr) {
         if (!n || typeof n.text !== 'string') continue;
         if (notes.find(x => x.id === n.id)) continue;
-        const rec = { id: n.id || newId(), title: n.title || '', text: n.text, html: n.html || '', images: Array.isArray(n.images) ? n.images : [], order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() };
+        const rec = { id: n.id || newId(), title: n.title || '', text: n.text, html: n.html || '', images: Array.isArray(n.images) ? n.images : [], files: Array.isArray(n.files) ? n.files : [], order: (typeof n.order === 'number' ? n.order : undefined), created: n.created || Date.now(), updated: n.updated || Date.now() };
         if (n.trashed) rec.trashed = n.trashed;
         notes.push(rec);
         added++;
       }
+      let restoredFiles = 0;
+      for (const [id, data] of Object.entries(att)) {
+        try { await filePut(id, data); restoredFiles++; } catch {}
+      }
       sortNotes();
       persist();
       renderList($('search').value);
-      toast('已還原 ' + added + ' 筆筆記');
+      renderFiles();
+      toast('已還原 ' + added + ' 筆筆記' + (restoredFiles ? '、' + restoredFiles + ' 個附件' : ''));
       scheduleSync();
     } catch {
       toast('檔案格式不對，請選擇之前的備份 json');
@@ -1487,6 +1540,179 @@ function showFallback(chunks, sl, tl, msg) {
   });
   box.appendChild(links);
 }
+
+// ===== 附件（PDF / Word / TXT 等）=====
+// 檔案內容存在 IndexedDB（容量大），localStorage 只留檔名等資訊，
+// 這樣附件再多也不會擠爆筆記本身的儲存空間。
+const IDB_NAME = 'tmemo-files';
+const IDB_STORE = 'files';
+let idbPromise = null;
+function idb() {
+  if (idbPromise) return idbPromise;
+  idbPromise = new Promise((res, rej) => {
+    const rq = indexedDB.open(IDB_NAME, 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore(IDB_STORE);
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  });
+  return idbPromise;
+}
+function idbRun(mode, fn) {
+  return idb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, mode);
+    const rq = fn(tx.objectStore(IDB_STORE));
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  }));
+}
+const fileGet = k => idbRun('readonly', s => s.get(k));
+const filePut = (k, v) => idbRun('readwrite', s => s.put(v, k));
+const fileDel = k => idbRun('readwrite', s => s.delete(k));
+const fileKeys = () => idbRun('readonly', s => s.getAllKeys());
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
+  return (b / 1024 / 1024).toFixed(1) + ' MB';
+}
+function fileIcon(name, type) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (type === 'application/pdf' || ext === 'pdf') return '📕';
+  if (['doc', 'docx'].includes(ext)) return '📘';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return '📗';
+  if (['ppt', 'pptx'].includes(ext)) return '📙';
+  if (['zip', 'rar', '7z'].includes(ext)) return '🗜';
+  if (['txt', 'md', 'log'].includes(ext)) return '📄';
+  return '📎';
+}
+function allFileIds() {
+  const s = new Set();
+  for (const n of notes) for (const f of (n.files || [])) s.add(f.id);
+  return s;
+}
+
+function readAsDataURL(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+async function renderFiles() {
+  const box = $('file-list');
+  box.innerHTML = '';
+  const n = activeNote();
+  if (!n) return;
+  const list = n.files || [];
+  if (!list.length) return;
+  let have = [];
+  try { have = await fileKeys(); } catch {}
+  const haveSet = new Set(have);
+  if (activeNote() !== n) return;   // 期間切換了筆記就放棄這次繪製
+  list.forEach((f, i) => {
+    const ready = haveSet.has(f.id);
+    const chip = document.createElement('div');
+    chip.className = 'file-chip' + (ready ? '' : ' pending');
+    const ico = document.createElement('span');
+    ico.className = 'file-ico';
+    ico.textContent = fileIcon(f.name, f.type);
+    const meta = document.createElement('div');
+    meta.className = 'file-meta';
+    const nm = document.createElement('div');
+    nm.className = 'file-name';
+    nm.textContent = f.name;
+    nm.title = f.name;
+    const sz = document.createElement('div');
+    sz.className = 'file-size';
+    sz.textContent = fmtBytes(f.size) + (ready ? '' : '・同步中…');
+    meta.appendChild(nm); meta.appendChild(sz);
+    chip.appendChild(ico); chip.appendChild(meta);
+
+    const dl = document.createElement('button');
+    dl.textContent = '下載';
+    dl.onclick = () => downloadAttachment(f);
+    chip.appendChild(dl);
+
+    const del = document.createElement('button');
+    del.className = 'file-del';
+    del.textContent = '刪除';
+    del.onclick = async () => {
+      if (!confirm('刪除附件「' + f.name + '」？')) return;
+      n.files.splice(i, 1);
+      n.updated = Date.now();
+      try { await fileDel(f.id); } catch {}
+      persist();
+      renderFiles();
+      renderList($('search').value);
+      scheduleSync();
+      toast('已刪除附件');
+    };
+    chip.appendChild(del);
+    box.appendChild(chip);
+  });
+}
+
+async function downloadAttachment(f) {
+  let data;
+  try { data = await fileGet(f.id); } catch {}
+  if (!data) { toast('這個附件還沒同步到這台裝置，請稍候再試'); return; }
+  const a = document.createElement('a');
+  a.href = data;
+  a.download = f.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function addAttachments(fileList) {
+  const n = activeNote();
+  if (!n) return;
+  const list = [...fileList];
+  if (!list.length) return;
+  let added = 0, skipped = [];
+  for (const file of list) {
+    if (file.size > MAX_FILE_BYTES) {
+      skipped.push(file.name + '（' + fmtBytes(file.size) + '）');
+      continue;
+    }
+    try {
+      const data = await readAsDataURL(file);
+      const id = newId();
+      await filePut(id, data);
+      (n.files = n.files || []).push({
+        id, name: file.name, type: file.type || '', size: file.size, added: Date.now()
+      });
+      added++;
+    } catch {
+      skipped.push(file.name);
+    }
+  }
+  if (added) {
+    n.updated = Date.now();
+    persist();
+    renderFiles();
+    renderList($('search').value);
+    scheduleSync();
+    toast('已附加 ' + added + ' 個檔案');
+    let total = 0;
+    for (const x of notes) for (const f of (x.files || [])) total += f.size || 0;
+    if (total > WARN_TOTAL_BYTES) {
+      toast('⚠️ 附件總量已達 ' + fmtBytes(total) + '，同步會變慢，建議刪掉用不到的附件');
+    }
+  }
+  if (skipped.length) {
+    alert('這些檔案超過單檔 1MB 上限，沒有加入：\n\n' + skipped.join('\n') +
+          '\n\n（想放更大的檔案，跟我說可以升級儲存方式）');
+  }
+}
+
+$('add-file').onclick = () => $('file-input').click();
+$('file-input').addEventListener('change', e => {
+  addAttachments(e.target.files);
+  e.target.value = '';
+});
 
 function renderImages() {
   const strip = $('img-strip');
@@ -2292,6 +2518,7 @@ async function pullRemote(id) {
   const d = await readGistFile(g, SYNC_FILE);
   const rd = await readGistFile(g, REM_FILE);
   const cd = await readGistFile(g, CAL_FILE);
+  const ad = await readGistFile(g, ATT_FILE);
   return {
     notes: d && Array.isArray(d.notes) ? d.notes : [],
     deleted: (d && d.deleted) || {},
@@ -2300,8 +2527,40 @@ async function pullRemote(id) {
     hadRemFile: !!rd,
     events: cd && Array.isArray(cd.events) ? cd.events : [],
     eventsDeleted: (cd && cd.deleted) || {},
-    hadCalFile: !!cd
+    hadCalFile: !!cd,
+    attachments: (ad && ad.files) || {},
+    hadAttFile: !!ad
   };
+}
+
+// 附件同步：本機沒有的抓下來、雲端沒有的傳上去、沒有筆記在用的清掉
+async function syncAttachments(remoteAtt) {
+  const referenced = allFileIds();
+  let localKeys = [];
+  try { localKeys = await fileKeys(); } catch { return { files: remoteAtt, changed: false }; }
+  const localSet = new Set(localKeys);
+  const merged = {};
+  let changed = false;
+
+  for (const id of referenced) {
+    if (remoteAtt[id]) {
+      merged[id] = remoteAtt[id];
+      if (!localSet.has(id)) {
+        try { await filePut(id, remoteAtt[id]); } catch {}   // 其他裝置加的，抓下來
+      }
+    } else if (localSet.has(id)) {
+      try {
+        const data = await fileGet(id);
+        if (data) { merged[id] = data; changed = true; }      // 本機新加的，傳上去
+      } catch {}
+    }
+  }
+  // 已經沒有筆記引用的附件，兩邊都清掉
+  for (const id of Object.keys(remoteAtt)) if (!referenced.has(id)) changed = true;
+  for (const id of localKeys) {
+    if (!referenced.has(id)) { try { await fileDel(id); } catch {} }
+  }
+  return { files: merged, changed };
 }
 
 function mergeReminders(remote) {
@@ -2398,6 +2657,7 @@ function applyRemoteToUI() {
   }
   renderList($('search').value);
   renderImages();
+  renderFiles();
 }
 
 async function syncNow(passive) {
@@ -2433,9 +2693,14 @@ async function syncNow(passive) {
     if (cal.changedRemote) {
       files[CAL_FILE] = { content: JSON.stringify({ events, deleted: eventsDeleted, updated: Date.now() }, null, 2) };
     }
+    const att = await syncAttachments(remote.attachments);
+    if (att.changed || !remote.hadAttFile) {
+      files[ATT_FILE] = { content: JSON.stringify({ files: att.files, updated: Date.now() }) };
+    }
     if (Object.keys(files).length) {
       await gh('/gists/' + id, { method: 'PATCH', body: JSON.stringify({ files }) });
     }
+    renderFiles();   // 剛抓下來的附件要從「同步中…」變成可下載
     lastSyncOk = Date.now();
     setSyncUI('ok');
   } catch (e) {
