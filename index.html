@@ -153,6 +153,10 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   display: flex; align-items: center; gap: 3px; flex-wrap: wrap;
   padding: 6px 8px; margin-bottom: 6px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  /* 固定在編輯區上方，捲動長筆記時仍可隨時套用格式 */
+  position: sticky; top: 0; z-index: 5;
+  /* 第一道陰影補滿上方 padding 的空隙，避免內容從縫隙透出 */
+  box-shadow: 0 -14px 0 var(--bg), 0 2px 6px rgba(0,0,0,0.07);
 }
 #fmt-bar button {
   min-width: 30px; height: 30px; padding: 0 7px;
@@ -164,7 +168,13 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 #fmt-bar .fb-i { font-style: italic; }
 #fmt-bar .fb-u { text-decoration: underline; }
 #fmt-bar .fb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
-.fb-color { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border); padding: 0; cursor: pointer; }
+/* 用 #fmt-bar 前綴壓過上面 `#fmt-bar button` 的 border/background 設定 */
+#fmt-bar .fb-color {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--border); padding: 0; cursor: pointer;
+}
+/* 預設色：跟著主題走（淺色模式深字、深色模式淺字） */
+#fmt-bar .fb-default { background: var(--text); }
 
 #editor {
   width: 100%;
@@ -507,6 +517,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
         <button data-size="4" title="一般">A</button>
         <button data-size="6" title="大字">A⁺</button>
         <span class="fb-sep"></span>
+        <button class="fb-color fb-default" data-color="default" title="預設色（清除文字顏色）"></button>
         <button class="fb-color" data-color="#e24b4a" style="background:#e24b4a" title="紅"></button>
         <button class="fb-color" data-color="#d97706" style="background:#d97706" title="橘"></button>
         <button class="fb-color" data-color="#16a34a" style="background:#16a34a" title="綠"></button>
@@ -1033,7 +1044,89 @@ editor.addEventListener('input', () => {
   queueSave();
   updateStatus();
 });
+
+// 從網頁/其他 app 貼上的內容常夾帶底色、外框、字體，先過濾再插入，
+// 只保留粗體、斜體、底線、文字顏色，讓貼進來的文字跟筆記本身一致
+const KEEP_ON_PASTE = ['color', 'font-weight', 'font-style', 'text-decoration', 'text-decoration-line'];
+function sanitizePastedHtml(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  tpl.content.querySelectorAll('script,style,meta,link,iframe,object,embed,svg').forEach(n => n.remove());
+  tpl.content.querySelectorAll('*').forEach(el => {
+    const keep = [];
+    for (const p of KEEP_ON_PASTE) {
+      const v = el.style.getPropertyValue(p);
+      if (v) keep.push(p + ':' + v);
+    }
+    const href = el.tagName === 'A' ? el.getAttribute('href') : null;
+    [...el.attributes].forEach(a => el.removeAttribute(a.name));
+    if (keep.length) el.setAttribute('style', keep.join(';'));
+    if (href) el.setAttribute('href', href);
+  });
+  return tpl.innerHTML;
+}
+
+editor.addEventListener('paste', e => {
+  const dt = e.clipboardData;
+  if (!dt) return;
+  // 圖片交給既有的附圖處理
+  if ([...(dt.items || [])].some(i => i.kind === 'file' && i.type.startsWith('image/'))) return;
+  const html = dt.getData('text/html');
+  if (!html) return;  // 純文字維持瀏覽器預設行為
+  e.preventDefault();
+  document.execCommand('insertHTML', false, sanitizePastedHtml(html));
+});
 $('note-title').addEventListener('input', queueSave);
+
+// removeFormat 清不掉底色與外框（常見於從網頁貼上的內容），這裡一併掃掉
+const NOISE_STYLES = ['background', 'background-color', 'background-image',
+  'border', 'border-top', 'border-right', 'border-bottom', 'border-left',
+  'border-radius', 'box-shadow', 'font-family', 'padding', 'margin', 'text-shadow'];
+
+function elementsInRange(range) {
+  const out = [];
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_ELEMENT);
+  let n;
+  while ((n = walker.nextNode())) {
+    if (!range || range.intersectsNode(n)) out.push(n);
+  }
+  return out;
+}
+
+function stripNoise(els) {
+  els.forEach(el => {
+    NOISE_STYLES.forEach(p => el.style.removeProperty(p));
+    if (el.getAttribute('style') === '') el.removeAttribute('style');
+  });
+}
+
+// 「預設色」：不寫死黑色（深色模式會看不見），而是移除顏色讓它跟著主題
+function clearTextColor() {
+  document.execCommand('foreColor', false, '#010203');
+  editor.querySelectorAll('[style]').forEach(el => {
+    if ((el.style.color || '').replace(/\s/g, '') === 'rgb(1,2,3)') {
+      el.style.removeProperty('color');
+      if (el.getAttribute('style') === '') el.removeAttribute('style');
+    }
+  });
+}
+
+// 回傳 true 表示清除的是整篇（使用者沒有選取任何文字）
+function clearFormatting() {
+  const sel = window.getSelection();
+  let range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+  const whole = !range || range.collapsed || !editor.contains(range.commonAncestorContainer);
+  if (whole) {
+    range = document.createRange();
+    range.selectNodeContents(editor);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  document.execCommand('removeFormat');
+  const sel2 = window.getSelection();
+  stripNoise(elementsInRange(sel2.rangeCount ? sel2.getRangeAt(0) : null));
+  return whole;
+}
 
 // 格式工具列：用 mousedown+preventDefault 保留編輯區選取範圍
 try { document.execCommand('styleWithCSS', false, true); } catch {}
@@ -1043,10 +1136,15 @@ $('fmt-bar').addEventListener('mousedown', e => {
   e.preventDefault();
   editor.focus();
   try { document.execCommand('styleWithCSS', false, true); } catch {}
-  if (btn.dataset.cmd) {
+  if (btn.dataset.cmd === 'removeFormat') {
+    const whole = clearFormatting();
+    toast(whole ? '已清除整篇格式（可按 Ctrl+Z 復原）' : '已清除選取範圍的格式');
+  } else if (btn.dataset.cmd) {
     document.execCommand(btn.dataset.cmd, false, null);
   } else if (btn.dataset.size) {
     document.execCommand('fontSize', false, btn.dataset.size);
+  } else if (btn.dataset.color === 'default') {
+    clearTextColor();
   } else if (btn.dataset.color) {
     document.execCommand('foreColor', false, btn.dataset.color);
   }
