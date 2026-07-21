@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>翻譯備忘簿</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#185fa5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="備忘簿">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png" type="image/png">
 <style>
 :root {
   --bg: #f7f6f3;
@@ -2230,7 +2238,12 @@ function mergeEvents(remote) {
   for (const e of remote.events) map.set(e.id, e);
   for (const e of events) {
     const o = map.get(e.id);
-    if (!o || (e.updated || 0) > (o.updated || 0)) map.set(e.id, e);
+    if (!o) { map.set(e.id, e); continue; }
+    const win = (e.updated || 0) > (o.updated || 0) ? { ...e } : { ...o };
+    // 保留最新的 lastSent，避免舊裝置把機器人寫回的「已通知」洗掉
+    const ls = [e.lastSent, o.lastSent].filter(Boolean).sort();
+    if (ls.length) win.lastSent = ls[ls.length - 1];
+    map.set(e.id, win);
   }
   const merged = [...map.values()].filter(e => !(del[e.id] && del[e.id] >= (e.updated || 0)));
   merged.sort((a, b) => (a.created || 0) - (b.created || 0));
@@ -2405,6 +2418,14 @@ setInterval(() => syncNow(true), 180000);
 
 load();
 if (getToken()) syncNow(); else setSyncUI('nosetup');
+
+// 註冊 Service Worker（讓程式可安裝成桌面/手機 app，並支援離線開啟）
+// 直接用 file:// 開啟本機檔案時不支援，略過即可，不影響功能
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>

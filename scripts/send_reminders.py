@@ -30,6 +30,7 @@ from email.message import EmailMessage
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 REM_FILE = 'reminders.json'
+CAL_FILE = 'calendar.json'
 SYNC_FILE = 'translate-memo-sync.json'
 TAIPEI = timezone(timedelta(hours=8))
 
@@ -68,7 +69,8 @@ def gh(path, method='GET', body=None):
 
 def find_gist():
     for g in gh('/gists?per_page=100'):
-        if SYNC_FILE in g.get('files', {}) or REM_FILE in g.get('files', {}):
+        files = g.get('files', {})
+        if SYNC_FILE in files or REM_FILE in files or CAL_FILE in files:
             return g['id']
     return None
 
@@ -108,11 +110,20 @@ def is_due(r, today):
     return False
 
 
-def send_telegram(lines):
+def build_message(rem_lines, cal_lines):
+    """把例行提醒與當天行事曆事項組成一則訊息（沒有的區塊就不出現）。"""
+    parts = []
+    if rem_lines:
+        parts.append('⏰ 今天的例行提醒\n' + '\n'.join('• ' + l for l in rem_lines))
+    if cal_lines:
+        parts.append('📅 今天的行事曆\n' + '\n'.join('• ' + l for l in cal_lines))
+    return '\n\n'.join(parts)
+
+
+def send_telegram(text):
     if not (TG_TOKEN and TG_CHAT):
         print('telegram: skipped (secrets not set)')
         return False
-    text = '⏰ 今天的例行提醒\n\n' + '\n'.join('• ' + l for l in lines)
     data = urllib.parse.urlencode({'chat_id': TG_CHAT, 'text': text}).encode()
     try:
         with urllib.request.urlopen(
@@ -128,11 +139,10 @@ def send_telegram(lines):
     return False
 
 
-def send_line(lines):
+def send_line(text):
     if not (LINE_TOKEN and LINE_USER):
         print('line: skipped (secrets not set)')
         return False
-    text = '⏰ 今天的例行提醒\n\n' + '\n'.join('• ' + l for l in lines)
     # LINE 單則文字上限 5000 字，超過就截斷保險
     if len(text) > 4900:
         text = text[:4900] + '…'
@@ -151,15 +161,15 @@ def send_line(lines):
     return False
 
 
-def send_email(lines):
+def send_email(text, count):
     if not (SMTP_HOST and SMTP_USER and SMTP_PASS and MAIL_TO):
         print('email: skipped (secrets not set)')
         return False
     msg = EmailMessage()
-    msg['Subject'] = '⏰ 今天的例行提醒（%d 項）' % len(lines)
+    msg['Subject'] = '⏰ 今天要處理的事項（%d 項）' % count
     msg['From'] = MAIL_FROM
     msg['To'] = MAIL_TO
-    msg.set_content('今天要處理的例行公事：\n\n' + '\n'.join('• ' + l for l in lines) +
+    msg.set_content(text +
                     '\n\n— 翻譯備忘簿 https://sauloveling.github.io/Personal_Memo_Note/')
     try:
         ctx = ssl.create_default_context()
@@ -188,40 +198,59 @@ def main():
     if not gist_id:
         print('no sync gist found — set up sync in the app first'); return
     gist = gh('/gists/' + gist_id)
-    data = read_file(gist, REM_FILE)
-    if not data or not isinstance(data.get('reminders'), list):
-        print('no reminders yet'); return
 
-    rems = data['reminders']
     today = datetime.now(TAIPEI)
     today_str = today.strftime('%Y-%m-%d')
+
+    # --- 例行提醒 ---
+    data = read_file(gist, REM_FILE)
+    rems = data.get('reminders', []) if isinstance(data, dict) else []
+    due = [r for r in rems if is_due(r, today)]
     print('checking %d reminders for %s (Taipei)' % (len(rems), today_str))
 
-    due = [r for r in rems if is_due(r, today)]
-    if not due:
+    # --- 行事曆上當天的事項 ---
+    cal = read_file(gist, CAL_FILE)
+    all_events = cal.get('events', []) if isinstance(cal, dict) else []
+    due_events = [e for e in all_events
+                  if e.get('date') == today_str and e.get('lastSent') != today_str]
+    print('checking %d calendar events, %d due today' % (len(all_events), len(due_events)))
+
+    if not due and not due_events:
         print('nothing due today'); return
 
-    lines = [r['text'] for r in due]
-    print('due:', ' | '.join(lines))
+    rem_lines = [r['text'] for r in due]
+    cal_lines = [e['text'] for e in due_events]
+    if rem_lines:
+        print('due reminders:', ' | '.join(rem_lines))
+    if cal_lines:
+        print('due calendar:', ' | '.join(cal_lines))
 
-    sent_tg = send_telegram(lines)
-    sent_line = send_line(lines)
-    sent_mail = send_email(lines)
+    text = build_message(rem_lines, cal_lines)
+    sent_tg = send_telegram(text)
+    sent_line = send_line(text)
+    sent_mail = send_email(text, len(rem_lines) + len(cal_lines))
     if not (sent_tg or sent_line or sent_mail):
         print('no channel delivered — leaving lastSent untouched so it retries'); sys.exit(1)
 
-    for r in due:
-        r['lastSent'] = today_str
-    # 單次提醒送出後自動停用，不再重複
-    for r in due:
-        if r.get('type') == 'once':
-            r['enabled'] = False
-    data['reminders'] = rems
-    data['updated'] = int(today.timestamp() * 1000)
-    gh('/gists/' + gist_id, 'PATCH', {
-        'files': {REM_FILE: {'content': json.dumps(data, ensure_ascii=False, indent=2)}}
-    })
-    print('marked %d reminders as sent' % len(due))
+    files = {}
+    if due:
+        for r in due:
+            r['lastSent'] = today_str
+            # 單次提醒送出後自動停用，不再重複
+            if r.get('type') == 'once':
+                r['enabled'] = False
+        data['reminders'] = rems
+        data['updated'] = int(today.timestamp() * 1000)
+        files[REM_FILE] = {'content': json.dumps(data, ensure_ascii=False, indent=2)}
+    if due_events:
+        for e in due_events:
+            e['lastSent'] = today_str
+        cal['events'] = all_events
+        cal['updated'] = int(today.timestamp() * 1000)
+        files[CAL_FILE] = {'content': json.dumps(cal, ensure_ascii=False, indent=2)}
+    if files:
+        gh('/gists/' + gist_id, 'PATCH', {'files': files})
+    print('marked %d reminders and %d calendar events as sent' % (len(due), len(due_events)))
 
 
 if __name__ == '__main__':
