@@ -380,6 +380,13 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .rem-item button:hover { background: var(--panel-2); }
 .rem-item .rem-del { color: var(--danger); }
 #rem-empty { font-size: 13px; color: var(--text-3); padding: 14px 2px; }
+.rem-ack-opt { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--text-2); cursor: pointer; line-height: 1.5; }
+.rem-ack-opt input { margin-top: 2px; flex-shrink: 0; }
+.rem-badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 6px; margin-left: 6px; vertical-align: 1px; }
+.rem-badge.need { background: var(--accent-bg); color: var(--accent); }
+.rem-badge.pending { background: var(--warn-bg); color: var(--warn); }
+.rem-badge.done { background: var(--ok-bg); color: var(--ok); }
+.rem-done-btn { color: var(--ok) !important; font-weight: 500; }
 
 .rec-item {
   display: flex; align-items: center; gap: 10px;
@@ -717,6 +724,7 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
       <input type="date" id="rem-date" style="display:none">
       <button class="btn primary" id="rem-add">＋ 新增</button>
     </div>
+    <label class="rem-ack-opt"><input type="checkbox" id="rem-ack"> 需要我按「完成」確認，否則每天持續提醒（適合報稅這類不能漏的事）</label>
 
     <div id="rem-status-line" style="font-size:13px; margin-top:12px; color:var(--text-2);"></div>
 
@@ -1831,6 +1839,27 @@ function remSchedText(r) {
   return '每月 ' + r.day + ' 號' + (r.day > 28 ? '（該月不足則當月最後一天）' : '');
 }
 
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// 使用者按「完成」：清掉待確認、記錄已完成，讓機器人停止嘮叨
+function ackReminder(id) {
+  const r = reminders.find(x => x.id === id);
+  if (!r) return false;
+  const ts = todayStr();
+  r.doneFor = r.pendingSince || ts;
+  delete r.pendingSince;
+  r.ackedAt = Date.now();
+  r.lastSent = ts;                 // 避免機器人今天再嘮叨一次
+  if (r.type === 'once') r.enabled = false;   // 單次確認後就結束
+  r.updated = Date.now();
+  persist();
+  scheduleSync();
+  return true;
+}
+
 let editingRemId = null;
 
 function buildSelect(pairs, val) {
@@ -1879,6 +1908,15 @@ function renderEditRow(r, item) {
   spacer.className = 'spacer';
   row.appendChild(spacer);
 
+  const ackLabel = document.createElement('label');
+  ackLabel.className = 'rem-ack-opt';
+  ackLabel.style.margin = '10px 0 0';
+  const ackBox = document.createElement('input');
+  ackBox.type = 'checkbox';
+  ackBox.checked = !!r.ack;
+  ackLabel.appendChild(ackBox);
+  ackLabel.appendChild(document.createTextNode(' 需要我按「完成」確認，否則每天持續提醒'));
+
   const save = document.createElement('button');
   save.className = 'btn primary';
   save.textContent = '儲存';
@@ -1892,6 +1930,12 @@ function renderEditRow(r, item) {
     if (r.type === 'monthly') r.day = parseInt(dsel.value, 10);
     if (r.type === 'weekly') r.weekday = parseInt(wsel.value, 10);
     if (r.type === 'once') r.date = dt.value;
+    if (ackBox.checked) {
+      r.ack = true;
+    } else if (r.ack) {
+      // 取消需確認：一併清掉待確認狀態
+      delete r.ack; delete r.pendingSince; delete r.doneFor; delete r.ackedAt;
+    }
     r.updated = Date.now();
     editingRemId = null;
     persist();
@@ -1905,6 +1949,7 @@ function renderEditRow(r, item) {
   cancel.onclick = () => { editingRemId = null; renderReminders(); };
   row.appendChild(save); row.appendChild(cancel);
   item.appendChild(row);
+  item.appendChild(ackLabel);
 
   const autoGrow = () => {
     ti.style.height = 'auto';
@@ -1948,11 +1993,33 @@ function renderReminders() {
     const t = document.createElement('div');
     t.className = 'rem-t';
     t.textContent = r.text;
+    if (r.ack) {
+      const badge = document.createElement('span');
+      if (r.pendingSince) { badge.className = 'rem-badge pending'; badge.textContent = '⚠️ 待確認'; }
+      else if (r.ackedAt) { badge.className = 'rem-badge done'; badge.textContent = '✅ 已完成'; }
+      else { badge.className = 'rem-badge need'; badge.textContent = '需確認'; }
+      t.appendChild(badge);
+    }
     const s = document.createElement('div');
     s.className = 'rem-s';
-    s.textContent = remSchedText(r) + (r.lastSent ? '・上次通知 ' + r.lastSent : '');
+    let sub = remSchedText(r);
+    if (r.pendingSince) sub += '・自 ' + r.pendingSince + ' 起等待確認';
+    else if (r.lastSent) sub += '・上次通知 ' + r.lastSent;
+    s.textContent = sub;
     main.appendChild(t); main.appendChild(s);
     item.appendChild(main);
+
+    if (r.pendingSince) {
+      const done = document.createElement('button');
+      done.className = 'rem-done-btn';
+      done.textContent = '✅ 完成';
+      done.onclick = () => {
+        ackReminder(r.id);
+        renderReminders();
+        toast('已標記完成，不再提醒');
+      };
+      item.appendChild(done);
+    }
 
     const edit = document.createElement('button');
     edit.textContent = '編輯';
@@ -2016,9 +2083,11 @@ $('rem-add').onclick = () => {
     if (!$('rem-date').value) { toast('請選擇日期'); return; }
     r.date = $('rem-date').value;
   }
+  if ($('rem-ack').checked) r.ack = true;
   reminders.push(r);
   persist();
   $('rem-text').value = '';
+  $('rem-ack').checked = false;
   renderReminders();
   scheduleSync();
   toast('已新增提醒');
@@ -2780,6 +2849,26 @@ window.addEventListener('online', () => syncNow(true));
 setInterval(() => syncNow(true), 180000);
 
 load();
+
+// 從通知的「✅ 完成」連結進來（#ack=<id>）：標記完成、同步、給使用者回饋
+function handleAckLink() {
+  const m = (location.hash || '').match(/[#&]ack=([^&]+)/);
+  if (!m) return;
+  const id = decodeURIComponent(m[1]);
+  history.replaceState(null, '', location.pathname + location.search);
+  const doAck = () => {
+    const r = reminders.find(x => x.id === id);
+    if (!r) { toast('找不到這則提醒（可能已刪除或尚未同步）'); return; }
+    ackReminder(id);
+    $('rem-btn').click();
+    renderReminders();
+    toast('✅ 已確認完成「' + r.text.slice(0, 20) + '」，不再提醒');
+  };
+  // 有同步就先拉最新的提醒清單再標記，確保點到的是同一則
+  if (getToken()) syncNow().then(doAck); else doAck();
+}
+handleAckLink();
+
 if (getToken()) syncNow(); else setSyncUI('nosetup');
 
 // 註冊 Service Worker（讓程式可安裝成桌面/手機 app，並支援離線開啟）

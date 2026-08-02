@@ -32,6 +32,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 REM_FILE = 'reminders.json'
 CAL_FILE = 'calendar.json'
 SYNC_FILE = 'translate-memo-sync.json'
+APP_URL = 'https://sauloveling.github.io/Personal_Memo_Note/'
 TAIPEI = timezone(timedelta(hours=8))
 
 GIST_TOKEN = os.environ.get('GIST_TOKEN', '')
@@ -89,11 +90,8 @@ def read_file(gist, name):
         return None
 
 
-def is_due(r, today):
-    if r.get('enabled') is False:
-        return False
-    if r.get('lastSent') == today.strftime('%Y-%m-%d'):
-        return False
+def occurs_on(r, today):
+    """排程當天是否落在 today（不看 enabled / lastSent / 確認狀態）。"""
     t = r.get('type')
     if t == 'daily':
         return True
@@ -110,11 +108,61 @@ def is_due(r, today):
     return False
 
 
-def build_message(rem_lines, cal_lines):
-    """把例行提醒與當天行事曆事項組成一則訊息（沒有的區塊就不出現）。"""
+def is_due(r, today):
+    """一般（不需確認）提醒：當天到期且今天還沒發過就發。保留給既有測試。"""
+    if r.get('enabled') is False:
+        return False
+    if r.get('lastSent') == today.strftime('%Y-%m-%d'):
+        return False
+    return occurs_on(r, today)
+
+
+def evaluate(r, today):
+    """回傳 (要不要通知, 這次待確認的起始日或 None)。
+
+    一般提醒：到期發一次。
+    需確認提醒（ack=True）：到期後每天嘮叨，直到使用者在 app 點「完成」
+    （app 會清掉 pendingSince、寫入 doneFor），才停止。
+    """
+    if r.get('enabled') is False:
+        return (False, None)
+    today_str = today.strftime('%Y-%m-%d')
+    if not r.get('ack'):
+        if r.get('lastSent') == today_str:
+            return (False, None)
+        return (occurs_on(r, today), None)
+    pend = r.get('pendingSince')
+    if pend:
+        if r.get('lastSent') == today_str:
+            return (False, None)      # 今天已經嘮叨過了
+        return (True, pend)           # 尚未確認 -> 繼續嘮叨
+    if occurs_on(r, today) and r.get('doneFor') != today_str:
+        return (True, today_str)      # 新到期，開始等待確認
+    return (False, None)
+
+
+def days_pending(date_str, today):
+    try:
+        d = datetime.strptime(date_str, '%Y-%m-%d').date()
+        return max(1, (today.date() - d).days + 1)
+    except (ValueError, TypeError):
+        return 1
+
+
+def build_message(rem_items, cal_lines):
+    """把例行提醒與當天行事曆事項組成一則訊息（沒有的區塊就不出現）。
+
+    rem_items 每項為 dict：{text, ack(bool), days(int), link(str)}。
+    需確認的項目會附上嘮叨天數與「完成」連結。
+    """
     parts = []
-    if rem_lines:
-        parts.append('⏰ 今天的例行提醒\n' + '\n'.join('• ' + l for l in rem_lines))
+    if rem_items:
+        lines = []
+        for it in rem_items:
+            lines.append('• ' + it['text'])
+            if it.get('ack'):
+                lines.append('  ⚠️ 尚未確認（第 %d 天）完成請點 👉 %s' % (it['days'], it['link']))
+        parts.append('⏰ 今天的例行提醒\n' + '\n'.join(lines))
     if cal_lines:
         parts.append('📅 今天的行事曆\n' + '\n'.join('• ' + l for l in cal_lines))
     return '\n\n'.join(parts)
@@ -205,7 +253,12 @@ def main():
     # --- 例行提醒 ---
     data = read_file(gist, REM_FILE)
     rems = data.get('reminders', []) if isinstance(data, dict) else []
-    due = [r for r in rems if is_due(r, today)]
+    # due 為 (reminder, 這次待確認起始日或 None) 的清單
+    due = []
+    for r in rems:
+        notify, pend = evaluate(r, today)
+        if notify:
+            due.append((r, pend))
     print('checking %d reminders for %s (Taipei)' % (len(rems), today_str))
 
     # --- 行事曆上當天的事項 ---
@@ -218,26 +271,39 @@ def main():
     if not due and not due_events:
         print('nothing due today'); return
 
-    rem_lines = [r['text'] for r in due]
+    rem_items = []
+    for r, pend in due:
+        item = {'text': r['text'], 'ack': bool(r.get('ack'))}
+        if r.get('ack'):
+            start = r.get('pendingSince') or pend or today_str
+            item['days'] = days_pending(start, today)
+            item['link'] = APP_URL + '#ack=' + str(r.get('id', ''))
+        rem_items.append(item)
     cal_lines = [e['text'] for e in due_events]
-    if rem_lines:
-        print('due reminders:', ' | '.join(rem_lines))
+    if rem_items:
+        print('due reminders:', ' | '.join(
+            it['text'] + (' [需確認 第%d天]' % it['days'] if it.get('ack') else '') for it in rem_items))
     if cal_lines:
         print('due calendar:', ' | '.join(cal_lines))
 
-    text = build_message(rem_lines, cal_lines)
+    text = build_message(rem_items, cal_lines)
     sent_tg = send_telegram(text)
     sent_line = send_line(text)
-    sent_mail = send_email(text, len(rem_lines) + len(cal_lines))
+    sent_mail = send_email(text, len(rem_items) + len(cal_lines))
     if not (sent_tg or sent_line or sent_mail):
         print('no channel delivered — leaving lastSent untouched so it retries'); sys.exit(1)
 
     files = {}
     if due:
-        for r in due:
+        for r, pend in due:
             r['lastSent'] = today_str
-            # 單次提醒送出後自動停用，不再重複
-            if r.get('type') == 'once':
+            r['updated'] = int(today.timestamp() * 1000)
+            if r.get('ack'):
+                # 記錄這次到期的待確認起始日（若尚未記錄）
+                if not r.get('pendingSince'):
+                    r['pendingSince'] = pend or today_str
+            elif r.get('type') == 'once':
+                # 一般單次提醒送出後自動停用（需確認的則等使用者確認才停）
                 r['enabled'] = False
         data['reminders'] = rems
         data['updated'] = int(today.timestamp() * 1000)
