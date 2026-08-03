@@ -924,10 +924,10 @@ function edHtml() {
   let h = editor.innerHTML;
   if (h === '<br>' || h === '<div><br></div>') return '';
   // 自動加上的超連結只是「顯示用」，不存進資料（連結可從網址文字重新產生）
-  if (h.indexOf('data-auto') !== -1) {
+  if (h.indexOf('<a') !== -1) {
     const tmp = document.createElement('div');
     tmp.innerHTML = h;
-    stripAutoLinks(tmp);
+    stripLinks(tmp);
     h = tmp.innerHTML;
   }
   return h;
@@ -943,8 +943,9 @@ const LS_SHOWLINKS = 'tmemo_showlinks_v1';
 let showLinks = localStorage.getItem(LS_SHOWLINKS) !== '0';   // 預設開啟
 const URL_QUICK = /(https?:\/\/|www\.)/i;
 
-function stripAutoLinks(root) {
-  root.querySelectorAll('a[data-auto]').forEach(a => {
+// 移除所有連結（含貼上帶進來的真連結），還原成純文字；連結一律從網址文字重新產生
+function stripLinks(root) {
+  root.querySelectorAll('a').forEach(a => {
     a.replaceWith(document.createTextNode(a.textContent));
   });
 }
@@ -988,7 +989,7 @@ function linkifyEditor() {
 }
 
 function normalizeLinks() {
-  stripAutoLinks(editor);
+  stripLinks(editor);
   editor.normalize();
   if (showLinks) linkifyEditor();
 }
@@ -1002,6 +1003,7 @@ function updateLinkToggleUI() {
 
 // 可編輯區裡點連結預設是放游標；改成直接開啟（開關開啟時才有連結可點）
 editor.addEventListener('click', e => {
+  if (!showLinks) return;                // 開關關閉時完全不攔截，讓使用者能編輯
   const a = e.target.closest && e.target.closest('a');
   if (!a) return;
   const sel = window.getSelection();
