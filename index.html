@@ -197,6 +197,8 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
   color: var(--text-3);
   pointer-events: none;
 }
+#editor a { color: var(--accent); text-decoration: underline; cursor: pointer; word-break: break-all; }
+#fmt-bar #link-toggle.active { background: var(--accent-bg); color: var(--accent); }
 
 #file-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 #file-list { display: contents; }
@@ -555,6 +557,8 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
         <button class="fb-color" data-color="#7c3aed" style="background:#7c3aed" title="紫"></button>
         <span class="fb-sep"></span>
         <button data-cmd="removeFormat" title="清除格式">✕</button>
+        <span class="fb-sep"></span>
+        <button id="link-toggle" data-link-toggle title="超連結開關">🔗</button>
       </div>
       <div id="editor" contenteditable="true" data-placeholder="在這裡輸入備忘內容，字數不限，打字會自動儲存。需要翻譯時按下方的「翻譯全文」，超過 5000 字會自動分段處理。"></div>
 
@@ -917,13 +921,96 @@ function fmtDate(ts) {
 
 function edText() { return editor.innerText.replace(/ /g, ' '); }
 function edHtml() {
-  const h = editor.innerHTML;
-  return (h === '<br>' || h === '<div><br></div>') ? '' : h;
+  let h = editor.innerHTML;
+  if (h === '<br>' || h === '<div><br></div>') return '';
+  // 自動加上的超連結只是「顯示用」，不存進資料（連結可從網址文字重新產生）
+  if (h.indexOf('data-auto') !== -1) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = h;
+    stripAutoLinks(tmp);
+    h = tmp.innerHTML;
+  }
+  return h;
 }
 function edLoad(n) {
   if (n && n.html) editor.innerHTML = n.html;
   else editor.innerText = (n && n.text) || '';
+  normalizeLinks();
 }
+
+// ===== 超連結：把網址文字變成可點擊的連結（顯示用，可用開關切換）=====
+const LS_SHOWLINKS = 'tmemo_showlinks_v1';
+let showLinks = localStorage.getItem(LS_SHOWLINKS) !== '0';   // 預設開啟
+const URL_QUICK = /(https?:\/\/|www\.)/i;
+
+function stripAutoLinks(root) {
+  root.querySelectorAll('a[data-auto]').forEach(a => {
+    a.replaceWith(document.createTextNode(a.textContent));
+  });
+}
+
+function linkifyTextNode(node) {
+  const text = node.nodeValue;
+  const re = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]}"'’」）】])|(www\.[^\s<]+[^\s<.,;:!?)\]}"'’」）】])/gi;
+  let m, last = 0, any = false;
+  const frag = document.createDocumentFragment();
+  while ((m = re.exec(text))) {
+    any = true;
+    const url = m[0];
+    if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const a = document.createElement('a');
+    a.href = /^www\./i.test(url) ? 'https://' + url : url;
+    a.textContent = url;
+    a.setAttribute('data-auto', '1');
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener nofollow');
+    frag.appendChild(a);
+    last = m.index + url.length;
+  }
+  if (any) {
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+function linkifyEditor() {
+  const targets = [];
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !URL_QUICK.test(node.nodeValue)) return NodeFilter.FILTER_REJECT;
+      let p = node.parentNode;
+      while (p && p !== editor) { if (p.tagName === 'A') return NodeFilter.FILTER_REJECT; p = p.parentNode; }
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  let n; while ((n = walker.nextNode())) targets.push(n);
+  targets.forEach(linkifyTextNode);
+}
+
+function normalizeLinks() {
+  stripAutoLinks(editor);
+  editor.normalize();
+  if (showLinks) linkifyEditor();
+}
+
+function updateLinkToggleUI() {
+  const btn = $('link-toggle');
+  if (!btn) return;
+  btn.classList.toggle('active', showLinks);
+  btn.title = showLinks ? '超連結：顯示中（點連結會開啟；要編輯連結請關閉）' : '超連結：已關閉（點一下開啟，網址會變可點擊）';
+}
+
+// 可編輯區裡點連結預設是放游標；改成直接開啟（開關開啟時才有連結可點）
+editor.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a');
+  if (!a) return;
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed) return;   // 使用者正在選取文字，別開啟連結
+  const href = a.getAttribute('href') || '';
+  if (!/^https?:\/\//i.test(href)) return;
+  e.preventDefault();
+  window.open(href, '_blank', 'noopener');
+});
 
 function createNote() {
   flushSave();
@@ -1089,6 +1176,12 @@ editor.addEventListener('input', () => {
   updateStatus();
 });
 
+// 離開編輯區時，把剛打的網址變成可點擊連結（打字當下不處理，避免游標亂跳）
+editor.addEventListener('blur', () => {
+  if (showLinks) normalizeLinks();
+  flushSave();
+});
+
 // 從網頁/其他 app 貼上的內容常夾帶底色、外框、字體，先過濾再插入，
 // 只保留粗體、斜體、底線、文字顏色，讓貼進來的文字跟筆記本身一致
 const KEEP_ON_PASTE = ['color', 'font-weight', 'font-style', 'text-decoration', 'text-decoration-line'];
@@ -1178,6 +1271,15 @@ $('fmt-bar').addEventListener('mousedown', e => {
   const btn = e.target.closest('button');
   if (!btn) return;
   e.preventDefault();
+  if (btn.dataset.linkToggle !== undefined) {
+    showLinks = !showLinks;
+    localStorage.setItem(LS_SHOWLINKS, showLinks ? '1' : '0');
+    updateLinkToggleUI();
+    normalizeLinks();
+    flushSave();
+    toast(showLinks ? '超連結已開啟：點網址即可開啟' : '超連結已關閉：網址變回純文字，方便編輯');
+    return;
+  }
   editor.focus();
   try { document.execCommand('styleWithCSS', false, true); } catch {}
   if (btn.dataset.cmd === 'removeFormat') {
@@ -2849,6 +2951,7 @@ window.addEventListener('online', () => syncNow(true));
 setInterval(() => syncNow(true), 180000);
 
 load();
+updateLinkToggleUI();
 
 // 從通知的「✅ 完成」連結進來（#ack=<id>）：標記完成、同步、給使用者回饋
 function handleAckLink() {
