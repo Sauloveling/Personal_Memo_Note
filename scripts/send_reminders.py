@@ -238,14 +238,32 @@ def send_email(text, count):
     return False
 
 
+def alert_token_expired():
+    """同步金鑰失效時，改用其他管道發一則看得懂的通知（那些管道的金鑰是獨立的）。"""
+    msg = ('⚠️ 翻譯備忘簿：同步金鑰（GIST_TOKEN）已失效或過期，例行提醒與行事曆通知已暫停。\n\n'
+           '請重新產生一組「不過期」的金鑰，並更新到 GitHub 的 GIST_TOKEN，'
+           '以及 app 各裝置的「同步」設定，即可恢復。')
+    ok = send_telegram(msg)
+    ok = send_line(msg) or ok
+    ok = send_email(msg, 1) or ok
+    print('GIST_TOKEN invalid — alerted via channels:', ok)
+
+
 def main():
     if not GIST_TOKEN:
         print('GIST_TOKEN not set — cannot read reminders'); sys.exit(1)
 
-    gist_id = find_gist()
-    if not gist_id:
-        print('no sync gist found — set up sync in the app first'); return
-    gist = gh('/gists/' + gist_id)
+    try:
+        gist_id = find_gist()
+        if not gist_id:
+            print('no sync gist found — set up sync in the app first'); return
+        gist = gh('/gists/' + gist_id)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            # 金鑰失效：不要讓整個 job 崩潰（避免看不懂的失敗信），改發清楚的提示
+            alert_token_expired()
+            return
+        raise
 
     today = datetime.now(TAIPEI)
     today_str = today.strftime('%Y-%m-%d')
