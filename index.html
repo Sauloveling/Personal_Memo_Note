@@ -389,6 +389,8 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
 .rem-badge.pending { background: var(--warn-bg); color: var(--warn); }
 .rem-badge.done { background: var(--ok-bg); color: var(--ok); }
 .rem-done-btn { color: var(--ok) !important; font-weight: 500; }
+#rem-voice.recording { background: var(--danger-bg); color: var(--danger); animation: voicepulse 1s ease-in-out infinite; }
+@keyframes voicepulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 .rec-item {
   display: flex; align-items: center; gap: 10px;
@@ -707,7 +709,9 @@ header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
     <div class="dsub">新增提醒</div>
     <div class="drow">
       <input type="text" id="rem-text" placeholder="要提醒什麼？例如：申報歐洲 VAT" autocomplete="off">
+      <button class="btn" id="rem-voice" title="用講的：例如「每個月5號提醒我繳電話費」">🎤 語音</button>
     </div>
+    <div id="rem-voice-hint" style="display:none; font-size:12px; color:var(--text-2); margin-top:-4px;"></div>
     <div class="drow">
       <select id="rem-type">
         <option value="monthly">每月</option>
@@ -2200,6 +2204,108 @@ $('rem-add').onclick = () => {
 $('rem-text').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); $('rem-add').click(); }
 });
+
+// ===== 語音新增提醒 =====
+// 把國字數字轉成阿拉伯數字（支援 1~31：五、十、二十、二十五、三十一…）
+function cnToNum(s) {
+  s = (s || '').trim();
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  const d = { 零: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  let m;
+  if (s === '十') return 10;
+  if ((m = s.match(/^十([一二三四五六七八九])$/))) return 10 + d[m[1]];
+  if ((m = s.match(/^([一二三四五六七八九兩])十([一二三四五六七八九])?$/))) return d[m[1]] * 10 + (m[2] ? d[m[2]] : 0);
+  if ((m = s.match(/^([零一二三四五六七八九])$/))) return d[m[1]];
+  return null;
+}
+
+// 從口語文字判斷排程，回傳 { type, day?, weekday?, date?, clean }
+function parseSpokenSchedule(raw) {
+  let text = (raw || '').trim();
+  const NUM = '\\d+|[零一二三四五六七八九十兩]+';
+  const WD = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
+  let res = { type: null, clean: text };
+  let m;
+
+  // 每週X / 每星期X / 每禮拜X
+  if ((m = text.match(new RegExp('每(?:週|周|星期|禮拜)([一二三四五六日天])')))) {
+    res.type = 'weekly'; res.weekday = WD[m[1]];
+    res.clean = text.replace(m[0], '');
+  } else if (/每天|每日/.test(text)) {
+    res.type = 'daily';
+    res.clean = text.replace(/每天|每日/, '');
+  } else if ((m = text.match(new RegExp('每(?:個)?月[的\\s]{0,2}(' + NUM + ')\\s*[號号]')))) {
+    const day = cnToNum(m[1]);
+    if (day >= 1 && day <= 31) { res.type = 'monthly'; res.day = day; res.clean = text.replace(m[0], ''); }
+  } else if ((m = text.match(new RegExp('(' + NUM + ')\\s*月[的\\s]{0,1}(' + NUM + ')\\s*[號号日]')))) {
+    const mo = cnToNum(m[1]), day = cnToNum(m[2]);
+    if (mo >= 1 && mo <= 12 && day >= 1 && day <= 31) {
+      res.type = 'once'; res.date = resolveYear(mo, day) + '-' + pad2(mo) + '-' + pad2(day);
+      res.clean = text.replace(m[0], '');
+    }
+  } else if (/明天|後天|大後天|今天/.test(text)) {
+    const base = new Date();
+    const off = /大後天/.test(text) ? 3 : /後天/.test(text) ? 2 : /明天/.test(text) ? 1 : 0;
+    base.setDate(base.getDate() + off);
+    res.type = 'once';
+    res.date = base.getFullYear() + '-' + pad2(base.getMonth() + 1) + '-' + pad2(base.getDate());
+    res.clean = text.replace(/大後天|後天|明天|今天/, '');
+  }
+
+  // 去掉開頭的「提醒我／記得／要／幫我」等贅字與多餘空白標點
+  res.clean = res.clean.replace(/^[\s,，。、：:]*/, '')
+    .replace(/^(?:提醒我|提醒|記得要|記得|請|幫我|要|我)+/, '')
+    .replace(/^[\s,，。、：:]*/, '').trim();
+  return res;
+}
+
+function applySpokenToForm(transcript) {
+  $('rem-text').value = transcript;
+  const p = parseSpokenSchedule(transcript);
+  const hint = $('rem-voice-hint');
+  if (p.type) {
+    $('rem-type').value = p.type;
+    $('rem-type').dispatchEvent(new Event('change'));
+    if (p.type === 'monthly') $('rem-day').value = String(p.day);
+    if (p.type === 'weekly') $('rem-weekday').value = String(p.weekday);
+    if (p.type === 'once') $('rem-date').value = p.date;
+    if (p.clean) $('rem-text').value = p.clean;
+    hint.textContent = '聽到了，已幫你填好 — 請確認下方日期與內容無誤，再按「＋ 新增」。';
+  } else {
+    hint.textContent = '聽到了：「' + transcript + '」。沒聽出日期，請自己選排程後按「＋ 新增」。';
+  }
+  hint.style.display = '';
+}
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SpeechRec) {
+  // 瀏覽器不支援（例如 Firefox）→ 隱藏按鈕
+  const vb = $('rem-voice'); if (vb) vb.style.display = 'none';
+} else {
+  let recog = null, recording = false;
+  $('rem-voice').onclick = () => {
+    if (recording && recog) { recog.stop(); return; }
+    recog = new SpeechRec();
+    recog.lang = 'zh-TW';
+    recog.interimResults = false;
+    recog.maxAlternatives = 1;
+    const btn = $('rem-voice');
+    recog.onstart = () => { recording = true; btn.classList.add('recording'); btn.textContent = '🔴 聆聽中…點此停止'; $('rem-voice-hint').style.display = 'none'; };
+    recog.onerror = (e) => {
+      const hint = $('rem-voice-hint');
+      hint.textContent = e.error === 'not-allowed'
+        ? '⚠️ 沒有麥克風權限 — 請在瀏覽器允許使用麥克風後再試。'
+        : '⚠️ 語音辨識失敗（' + e.error + '），可以改用打字。';
+      hint.style.display = '';
+    };
+    recog.onresult = (e) => {
+      const t = (e.results[0][0].transcript || '').trim();
+      if (t) applySpokenToForm(t);
+    };
+    recog.onend = () => { recording = false; btn.classList.remove('recording'); btn.textContent = '🎤 語音'; };
+    try { recog.start(); } catch { /* 連點保護 */ }
+  };
+}
 
 $('rem-btn').onclick = () => {
   editingRemId = null;
