@@ -92,6 +92,10 @@ def read_file(gist, name):
 
 def occurs_on(r, today):
     """排程當天是否落在 today（不看 enabled / lastSent / 確認狀態）。"""
+    # 起始日：還沒到 startDate 的循環提醒不觸發（例如「11/2 起每週一」）
+    start = r.get('startDate')
+    if start and today.strftime('%Y-%m-%d') < start:
+        return False
     t = r.get('type')
     if t == 'daily':
         return True

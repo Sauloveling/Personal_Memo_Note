@@ -1941,10 +1941,13 @@ document.addEventListener('paste', e => {
 });
 
 function remSchedText(r) {
-  if (r.type === 'daily') return '每天';
-  if (r.type === 'weekly') return '每週' + ['日', '一', '二', '三', '四', '五', '六'][r.weekday];
-  if (r.type === 'once') return r.date + ' 單次';
-  return '每月 ' + r.day + ' 號' + (r.day > 28 ? '（該月不足則當月最後一天）' : '');
+  let s;
+  if (r.type === 'daily') s = '每天';
+  else if (r.type === 'weekly') s = '每週' + ['日', '一', '二', '三', '四', '五', '六'][r.weekday];
+  else if (r.type === 'once') s = r.date + ' 單次';
+  else s = '每月 ' + r.day + ' 號' + (r.day > 28 ? '（該月不足則當月最後一天）' : '');
+  if (r.startDate && r.type !== 'once') s += '（自 ' + r.startDate + ' 起）';
+  return s;
 }
 
 function todayStr() {
